@@ -1,0 +1,10 @@
+---
+source: plf/src/snapshot_tests/rendering.rs
+expression: "&err"
+input_file: plf/src/snapshot_tests/rendering_inputs/errors/unknown_subscript.txt
+---
+error: Index expression is undefined
+ --> unknown_subscript.txt:1:11
+  |
+1 | {{ numbers[unknown] }}
+  |            ^^^^^^^

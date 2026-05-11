@@ -1,0 +1,6 @@
+---
+source: plf/src/snapshot_tests/parser.rs
+expression: "&res_nodes"
+input_file: plf/src/snapshot_tests/parser_inputs/success/tags/comment_before_extend.txt
+---
+[]

@@ -1,0 +1,10 @@
+---
+source: plf/src/snapshot_tests/build_errors.rs
+expression: "&err"
+input_file: plf/src/snapshot_tests/build_errors/validation/unknown_filter_in_component.txt
+---
+error: Unknown filter `unknown_filter`
+ --> tpl:2:10
+  |
+2 | {{ name | unknown_filter }}
+  |           ^^^^^^^^^^^^^^

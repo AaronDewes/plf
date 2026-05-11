@@ -1,0 +1,6 @@
+---
+source: plf/src/snapshot_tests/build_errors.rs
+expression: "&err"
+input_file: plf/src/snapshot_tests/build_errors/circular_include.txt
+---
+Circular include detected for template 'a'. Include chain: `["a", "b", "a"]`

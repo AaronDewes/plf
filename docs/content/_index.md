@@ -44,7 +44,7 @@ templates/
 Assuming the Rust file is at the same level as the `templates` folder, we can get a Tera instance that way:
 
 ```rust
-use tera::Tera;
+use plf::Tera;
 
 let mut tera = Tera::default();
 
@@ -72,7 +72,7 @@ the template name for the file located at `templates/hello.html` will be `hello.
 The context has to be an instance of `tera::Context`:
 
 ```rust
-use tera::Context;
+use plf::Context;
 
 let mut context = Context::new();
 context.insert("age", &24);

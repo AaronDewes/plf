@@ -1,0 +1,10 @@
+---
+source: plf/src/snapshot_tests/rendering.rs
+expression: "&err"
+input_file: plf/src/snapshot_tests/rendering_inputs/errors/invalid_map_key_access.txt
+---
+error: Map keys must be strings, integers, or bools, got `array`.
+ --> invalid_map_key_access.txt:1:11
+  |
+1 | {{ product[reviews] }}
+  |            ^^^^^^^

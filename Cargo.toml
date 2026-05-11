@@ -1,6 +1,6 @@
 [workspace]
-members = ["tera", "tera-contrib"]
-resolver = "2"
+members = ["plf", "plf-contrib"]
+resolver = "3"
 
 [profile.release]
 debug = true

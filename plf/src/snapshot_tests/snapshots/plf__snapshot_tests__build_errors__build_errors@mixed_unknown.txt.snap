@@ -1,0 +1,22 @@
+---
+source: plf/src/snapshot_tests/build_errors.rs
+expression: "&err"
+input_file: plf/src/snapshot_tests/build_errors/mixed_unknown.txt
+---
+error: Unknown filter `unknown_filter`
+ --> tpl:1:10
+  |
+1 | {{ name | unknown_filter }}
+  |           ^^^^^^^^^^^^^^
+
+error: Unknown component `unknown_component`
+ --> tpl:2:2
+  |
+2 | {{<unknown_component />}}
+  |   ^^^^^^^^^^^^^^^^^^^^^
+
+error: Unknown function `unknown_func`
+ --> tpl:3:3
+  |
+3 | {{ unknown_func() }}
+  |    ^^^^^^^^^^^^^^

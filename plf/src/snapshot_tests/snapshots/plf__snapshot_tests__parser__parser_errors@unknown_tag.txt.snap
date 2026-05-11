@@ -1,0 +1,10 @@
+---
+source: plf/src/snapshot_tests/parser.rs
+expression: res.unwrap_err()
+input_file: plf/src/snapshot_tests/parser_inputs/errors/unknown_tag.txt
+---
+error: Unknown tag
+ --> unknown_tag.txt:1:4
+  |
+1 | i.{%a.
+  |     ^

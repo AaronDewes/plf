@@ -1,0 +1,10 @@
+---
+source: plf/src/snapshot_tests/rendering.rs
+expression: "&err"
+input_file: plf/src/snapshot_tests/rendering_inputs/errors/unknown_field_opt.txt
+---
+error: Tried to render a variable that is not defined
+ --> unknown_field_opt.txt:1:9
+  |
+1 | {{ name?.unknown }}
+  |          ^^^^^^^

@@ -1,0 +1,10 @@
+---
+source: plf/src/snapshot_tests/parser.rs
+expression: res.unwrap_err()
+input_file: plf/src/snapshot_tests/parser_inputs/errors/unclosed_tag.txt
+---
+error: Unexpected end of input
+ --> unclosed_tag.txt:1:27
+  |
+1 | {% if i + 2 | integer > x %
+  |                            ^

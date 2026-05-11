@@ -1,0 +1,7 @@
+---
+source: plf/src/snapshot_tests/parser.rs
+expression: Expressions(expr_nodes)
+input_file: plf/src/snapshot_tests/parser_inputs/success/components/render_inline_escaped.txt
+---
+<button{label: 'hello
+world'}/>

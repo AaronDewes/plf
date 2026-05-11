@@ -1,0 +1,10 @@
+---
+source: plf/src/snapshot_tests/build_errors.rs
+expression: "&err"
+input_file: plf/src/snapshot_tests/build_errors/syntax/invalid_tag.txt
+---
+error: Unexpected end of input
+ --> test.html:2:5
+  |
+2 | hello
+  |      ^

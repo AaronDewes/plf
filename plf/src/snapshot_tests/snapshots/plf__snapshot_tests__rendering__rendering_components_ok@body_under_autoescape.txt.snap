@@ -1,0 +1,6 @@
+---
+source: plf/src/snapshot_tests/rendering.rs
+expression: "&out"
+input_file: plf/src/snapshot_tests/rendering_inputs/success/components/body_under_autoescape.txt
+---
+<div><b>&lt;html&gt;</b></div>

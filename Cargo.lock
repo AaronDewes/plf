@@ -1284,6 +1284,44 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "plf"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "boa_engine",
+ "boa_runtime",
+ "criterion",
+ "globset",
+ "indexmap",
+ "insta",
+ "itoa",
+ "num-bigint",
+ "num-traits",
+ "pulldown-cmark-escape",
+ "serde",
+ "serde_derive",
+ "tempfile",
+ "unicode-segmentation",
+ "walkdir",
+]
+
+[[package]]
+name = "plf-contrib"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "formatx",
+ "humansize",
+ "jiff",
+ "percent-encoding",
+ "plf",
+ "rand 0.10.1",
+ "regex",
+ "serde_json",
+ "slug",
+]
+
+[[package]]
 name = "plotters"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1744,44 +1782,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
-]
-
-[[package]]
-name = "tera"
-version = "2.0.0-alpha.5"
-dependencies = [
- "ahash",
- "boa_engine",
- "boa_runtime",
- "criterion",
- "globset",
- "indexmap",
- "insta",
- "itoa",
- "num-bigint",
- "num-traits",
- "pulldown-cmark-escape",
- "serde",
- "serde_derive",
- "tempfile",
- "unicode-segmentation",
- "walkdir",
-]
-
-[[package]]
-name = "tera-contrib"
-version = "0.2.0-alpha.5"
-dependencies = [
- "base64",
- "formatx",
- "humansize",
- "jiff",
- "percent-encoding",
- "rand 0.10.1",
- "regex",
- "serde_json",
- "slug",
- "tera",
 ]
 
 [[package]]

@@ -1,3 +1,3 @@
-# Tera
+# Plf
 
-See [migration guide](./MIGRATION.md).
+A templating language.

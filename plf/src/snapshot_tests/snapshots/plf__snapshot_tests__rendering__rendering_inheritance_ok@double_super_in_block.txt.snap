@@ -1,0 +1,7 @@
+---
+source: plf/src/snapshot_tests/rendering.rs
+assertion_line: 180
+expression: "&normalized_out"
+input_file: plf/src/snapshot_tests/rendering_inputs/success/inheritance/double_super_in_block.txt
+---
+M-A-M | M-A-M

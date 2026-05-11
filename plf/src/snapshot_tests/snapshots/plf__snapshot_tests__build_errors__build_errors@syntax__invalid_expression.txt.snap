@@ -1,0 +1,10 @@
+---
+source: plf/src/snapshot_tests/build_errors.rs
+expression: "&err"
+input_file: plf/src/snapshot_tests/build_errors/syntax/invalid_expression.txt
+---
+error: Found `}}` but expected one of: integer, float, string, bool, ident, `-`, `not`, `<`, `{`, `[` or `(`
+ --> test.html:1:7
+  |
+1 | {{ 1 + }}
+  |        ^^

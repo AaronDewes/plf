@@ -1,0 +1,7 @@
+---
+source: plf/src/snapshot_tests/rendering.rs
+expression: "&normalized_out"
+input_file: plf/src/snapshot_tests/rendering_inputs/success/ternary.txt
+---
+majeur
+tom

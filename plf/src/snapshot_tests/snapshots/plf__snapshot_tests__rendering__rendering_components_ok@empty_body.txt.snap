@@ -1,0 +1,6 @@
+---
+source: plf/src/snapshot_tests/rendering.rs
+expression: "&out"
+input_file: plf/src/snapshot_tests/rendering_inputs/success/components/empty_body.txt
+---
+<div></div>

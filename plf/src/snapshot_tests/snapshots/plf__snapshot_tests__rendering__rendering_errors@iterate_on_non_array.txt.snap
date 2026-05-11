@@ -1,0 +1,10 @@
+---
+source: plf/src/snapshot_tests/rendering.rs
+expression: "&err"
+input_file: plf/src/snapshot_tests/rendering_inputs/errors/iterate_on_non_array.txt
+---
+error: Iteration not possible on type `i64`
+ --> iterate_on_non_array.txt:1:12
+  |
+1 | {% for i in age %}
+  |             ^^^
