@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 #[cfg(feature = "js")]
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 #[cfg(feature = "js")]
 use boa_engine::{JsValue, NativeFunction, js_string, object::builtins::JsFunction};
@@ -94,7 +94,7 @@ pub struct Tera {
     fallback_prefixes: Vec<String>,
     /// JS engine
     #[cfg(feature = "js")]
-    pub(crate) global_js_context: boa_engine::Context,
+    pub(crate) global_js_context: Mutex<boa_engine::Context>,
 }
 
 impl Tera {
@@ -120,7 +120,7 @@ impl Tera {
             delimiters: Delimiters::default(),
             fallback_prefixes: Vec::new(),
             #[cfg(feature = "js")]
-            global_js_context: js_ctx,
+            global_js_context: Mutex::new(js_ctx),
         };
         tera.register_builtin_filters();
         tera.register_builtin_tests();
@@ -128,8 +128,10 @@ impl Tera {
         let functions = tera.functions.clone();
 
         tera.global_js_context
+            .lock()
+            .unwrap()
             .register_global_callable(
-                js_string!("definePlfHandler"),
+                js_string!("registerPlfHandler"),
                 3,
                 // SAFETY: `from_closure` is unsafe if the closure captures data that needs to be traced by the GC,
                 // which we don't do here.
@@ -1280,7 +1282,7 @@ impl Tera {
     /// assert_eq!(html, "<div><h1>My Card</h1><p>Card content here</p></div>");
     /// ```
     pub fn render_component(
-        &self,
+        &mut self,
         component_name: &str,
         context: &Context,
         body: Option<&str>,
@@ -1317,7 +1319,7 @@ impl Tera {
     /// assert_eq!(buffer, b"<button>Click me</button>");
     /// ```
     pub fn render_component_to(
-        &self,
+        &mut self,
         component_name: &str,
         context: &Context,
         body: Option<&str>,
@@ -1362,6 +1364,8 @@ impl Tera {
         use boa_engine::Source;
 
         self.global_js_context
+            .lock()
+            .unwrap()
             .eval(Source::from_bytes(code.as_bytes()))
     }
 

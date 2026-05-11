@@ -16,7 +16,7 @@ pub(crate) static MAGICAL_DUMP_VAR: &str = "__tera_context";
 /// We pass it around rather than put it on the VM to avoid multiple borrow issues
 /// when dealing with inheritance.
 #[derive(Debug)]
-pub struct State<'tera, 'js> {
+pub struct State<'tera> {
     pub(crate) stack: Stack,
     /// It can be None for things like tests as we don't expose Chunk outside of the crate
     pub(crate) chunk: Option<&'tera Chunk>,
@@ -32,23 +32,16 @@ pub struct State<'tera, 'js> {
     /// Scratch buffer for escaping output to avoid per-write allocations
     pub(crate) escape_buffer: Vec<u8>,
     /// Used in includes only
-    pub(crate) include_parent: Option<&'tera State<'tera, 'js>>,
+    pub(crate) include_parent: Option<&'tera State<'tera>>,
 
     /// (block name, (all_chunks, level))
     pub(crate) blocks: BTreeMap<&'tera str, (Vec<&'tera Chunk>, usize)>,
     pub(crate) current_block_name: Option<&'tera str>,
     /// Reference to registered filters for calling filters from within filters (e.g., map filter)
     pub(crate) filters: Option<&'tera HashMap<Cow<'static, str>, StoredFilter>>,
-
-    #[cfg(feature = "js")]
-    pub(crate) js_context: Option<&'js mut boa_engine::Context>,
-
-    #[cfg(not(feature = "js"))]
-    // Phantom data to keep the 'js lifetime parameter
-    _js_lifetime: std::marker::PhantomData<&'js ()>,
 }
 
-impl<'t, 'js> State<'t, 'js> {
+impl<'t> State<'t> {
     pub(crate) fn new_with_chunk(context: &'t Context, chunk: &'t Chunk) -> Self {
         let mut s = Self::new(context);
         s.chunk = Some(chunk);
@@ -71,20 +64,7 @@ impl<'t, 'js> State<'t, 'js> {
             blocks: BTreeMap::new(),
             current_block_name: None,
             filters: None,
-            #[cfg(feature = "js")]
-            js_context: None,
-            #[cfg(not(feature = "js"))]
-            _js_lifetime: std::marker::PhantomData,
         }
-    }
-
-    #[cfg(feature = "js")]
-    /// Creates a new state from a `Context` and a JS context.
-    /// Public since it's needed to test filters/fns/tests.
-    pub fn new_with_js(context: &'t Context, js_context: &'js mut boa_engine::Context) -> Self {
-        let mut s = Self::new(context);
-        s.js_context = Some(js_context);
-        s
     }
 
     pub(crate) fn store_local(&mut self, name: &str, value: Value) {

@@ -20,7 +20,7 @@ pub(crate) struct VirtualMachine<'tera> {
     autoescape_override: Option<bool>,
 }
 
-impl<'tera, 'js> VirtualMachine<'tera> {
+impl<'tera> VirtualMachine<'tera> {
     pub fn new(tera: &'tera Tera, template: &'tera Template) -> Self {
         Self {
             tera,
@@ -48,7 +48,7 @@ impl<'tera, 'js> VirtualMachine<'tera> {
 
     pub(crate) fn interpret(
         &self,
-        state: &mut State<'tera, 'js>,
+        state: &mut State<'tera>,
         output: &mut impl Write,
     ) -> TeraResult<()> {
         let mut ip = 0;
@@ -489,7 +489,7 @@ impl<'tera, 'js> VirtualMachine<'tera> {
                     } else {
                         let f = &self.tera.functions()[name.as_str()];
                         let val = match f
-                            .call(Kwargs::new(Arc::new(kwargs.into_map().unwrap())), state)
+                            .call(Kwargs::new(Arc::new(kwargs.into_map().unwrap())), state, &mut self.tera.global_js_context.lock().unwrap())
                         {
                             Ok(v) => v,
                             Err(err) => {
@@ -839,7 +839,7 @@ impl<'tera, 'js> VirtualMachine<'tera> {
 
     fn undefined_var_error(
         &self,
-        state: &State<'tera, 'js>,
+        state: &State<'tera>,
         chunk: &Chunk,
         name: &str,
         span: &Span,
@@ -906,7 +906,7 @@ impl<'tera, 'js> VirtualMachine<'tera> {
     fn render_include(
         &self,
         name: &str,
-        state: &State<'tera, 'js>,
+        state: &State<'tera>,
         output: &mut impl Write,
     ) -> TeraResult<()> {
         let tpl = self.tera.must_get_template(name)?;

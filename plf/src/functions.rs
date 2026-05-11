@@ -67,16 +67,16 @@ impl StoredFunction {
         }
     }
 
-    pub fn call(&self, kwargs: Kwargs, state: &mut State) -> TeraResult<Value> {
+    pub fn call(
+        &self,
+        kwargs: Kwargs,
+        state: &mut State,
+        #[cfg(feature = "js")] js_context: &mut boa_engine::Context,
+    ) -> TeraResult<Value> {
         match &self.inner {
             FunctionInner::Rust(func) => func(kwargs, state),
             #[cfg(feature = "js")]
             FunctionInner::Js(js_func) => {
-                let Some(ref mut js_context) = state.js_context else {
-                    return Err(Error::message(
-                        "JS function called but no JS context is available in the state",
-                    ));
-                };
                 use boa_engine::{
                     JsValue,
                     value::{TryFromJs, TryIntoJs},
@@ -84,10 +84,10 @@ impl StoredFunction {
 
                 match js_func.call(
                     &JsValue::undefined(),
-                    &[kwargs.try_into_js(*js_context).map_err(|e| {
+                    &[kwargs.try_into_js(js_context).map_err(|e| {
                         Error::message(format!("Error converting kwargs to JS value: {e}"))
                     })?],
-                    *js_context,
+                    js_context,
                 ) {
                     Ok(result) => {
                         let val = if let Some(promise) = result.as_promise() {
@@ -116,19 +116,19 @@ impl StoredFunction {
                                     ctx.enqueue_job(Job::TimeoutJob(job));
                                     Ok(JsValue::undefined())
                                 },
-                                *js_context,
+                                js_context,
                             );
 
                             let result =
-                                JsPromise::race([promise.clone(), empty_promise], *js_context);
+                                JsPromise::race([promise.clone(), empty_promise], js_context);
 
-                            result.await_blocking(*js_context).map_err(|e| {
+                            result.await_blocking(js_context).map_err(|e| {
                                 Error::message(format!("Error awaiting JS promise: {e}"))
                             })?
                         } else {
                             result
                         };
-                        Value::try_from_js(&val, *js_context).map_err(|e| {
+                        Value::try_from_js(&val, js_context).map_err(|e| {
                             Error::message(format!("Error converting JS result to Tera value: {e}"))
                         })
                     }
