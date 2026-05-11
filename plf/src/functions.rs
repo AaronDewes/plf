@@ -89,11 +89,49 @@ impl StoredFunction {
                     })?],
                     *js_context,
                 ) {
-                    Ok(result) => Value::try_from_js(&result, *js_context).map_err(|e| {
-                        Error::message(format!(
-                            "Error converting JS function result to Tera Value: {e}"
-                        ))
-                    }),
+                    Ok(result) => {
+                        let val = if let Some(promise) = result.as_promise() {
+                            use boa_engine::object::builtins::JsPromise;
+
+                            let empty_promise = JsPromise::new(
+                                |resolvers, ctx| {
+                                    use boa_engine::job::{Job, NativeJob, TimeoutJob};
+
+                                    let rejector = resolvers.reject.clone();
+                                    let job = TimeoutJob::new(
+                                        NativeJob::new(move |ctx| {
+                                            use boa_engine::js_string;
+
+                                            rejector.call(
+                                                &JsValue::undefined(),
+                                                &[JsValue::from(js_string!(
+                                                    "Promise timed out after 2 seconds"
+                                                ))],
+                                                ctx,
+                                            )?;
+                                            Ok(JsValue::undefined())
+                                        }),
+                                        2000,
+                                    );
+                                    ctx.enqueue_job(Job::TimeoutJob(job));
+                                    Ok(JsValue::undefined())
+                                },
+                                *js_context,
+                            );
+
+                            let result =
+                                JsPromise::race([promise.clone(), empty_promise], *js_context);
+
+                            result.await_blocking(*js_context).map_err(|e| {
+                                Error::message(format!("Error awaiting JS promise: {e}"))
+                            })?
+                        } else {
+                            result
+                        };
+                        Value::try_from_js(&val, *js_context).map_err(|e| {
+                            Error::message(format!("Error converting JS result to Tera value: {e}"))
+                        })
+                    }
                     Err(e) => Err(Error::message(format!("Error calling JS function: {e}"))),
                 }
             }
