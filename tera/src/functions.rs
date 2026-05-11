@@ -30,8 +30,15 @@ where
 type FunctionFunc = dyn Fn(Kwargs, &State) -> TeraResult<Value> + Sync + Send + 'static;
 
 #[derive(Clone)]
+pub(crate) enum FunctionInner {
+    Rust(Arc<FunctionFunc>),
+    #[cfg(feature = "js")]
+    Js(boa_engine::object::builtins::JsFunction),
+}
+
+#[derive(Clone)]
 pub(crate) struct StoredFunction {
-    func: Arc<FunctionFunc>,
+    inner: FunctionInner,
     is_safe: bool,
 }
 
@@ -47,13 +54,37 @@ impl StoredFunction {
         };
 
         StoredFunction {
-            func: Arc::new(closure),
+            inner: FunctionInner::Rust(Arc::new(closure)),
             is_safe,
         }
     }
 
-    pub fn call(&self, kwargs: Kwargs, state: &State) -> TeraResult<Value> {
-        (self.func)(kwargs, state)
+    pub fn call(&self, kwargs: Kwargs, state: &mut State) -> TeraResult<Value> {
+        match &self.inner {
+            FunctionInner::Rust(func) => func(kwargs, state),
+            #[cfg(feature = "js")]
+            FunctionInner::Js(js_func) => {
+                use boa_engine::{
+                    JsValue,
+                    value::{TryFromJs, TryIntoJs},
+                };
+
+                match js_func.call(
+                    &JsValue::undefined(),
+                    &[kwargs.try_into_js(&mut state.js_context).map_err(|e| {
+                        Error::message(format!("Error converting kwargs to JS value: {e}"))
+                    })?],
+                    &mut state.js_context,
+                ) {
+                    Ok(result) => Value::try_from_js(&result, &mut state.js_context).map_err(|e| {
+                        Error::message(format!(
+                            "Error converting JS function result to Tera Value: {e}"
+                        ))
+                    }),
+                    Err(e) => Err(Error::message(format!("Error calling JS function: {e}"))),
+                }
+            }
+        }
     }
 
     pub fn is_safe(&self) -> bool {

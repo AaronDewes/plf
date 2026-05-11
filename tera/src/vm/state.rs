@@ -39,6 +39,9 @@ pub struct State<'tera> {
     pub(crate) current_block_name: Option<&'tera str>,
     /// Reference to registered filters for calling filters from within filters (e.g., map filter)
     pub(crate) filters: Option<&'tera HashMap<Cow<'static, str>, StoredFilter>>,
+
+    #[cfg(feature = "js")]
+    pub(crate) js_context: boa_engine::Context,
 }
 
 impl<'t> State<'t> {
@@ -64,6 +67,8 @@ impl<'t> State<'t> {
             blocks: BTreeMap::new(),
             current_block_name: None,
             filters: None,
+            #[cfg(feature = "js")]
+            js_context: boa_engine::Context::default(),
         }
     }
 

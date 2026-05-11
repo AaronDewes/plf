@@ -12,6 +12,8 @@ use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 use unicode_segmentation::UnicodeSegmentation;
 
 mod de;
+#[cfg(feature = "js")]
+mod js;
 mod key;
 pub(crate) mod number;
 mod ser;

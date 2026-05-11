@@ -7,6 +7,9 @@ use crate::errors::{Error, TeraResult};
 use crate::value::number::Number;
 use crate::value::{Key, Map, ValueInner};
 
+#[cfg(feature = "js")]
+mod js;
+
 mod private {
     use super::{Map, Number, Value};
     use std::borrow::Cow;
