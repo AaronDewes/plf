@@ -93,6 +93,9 @@ impl StoredFunction {
                         let val = if let Some(promise) = result.as_promise() {
                             use boa_engine::object::builtins::JsPromise;
 
+                            let mut has_hit_timeout = false;
+                            let timeout_ptr = &mut has_hit_timeout as *mut bool;
+
                             let empty_promise = JsPromise::new(
                                 |resolvers, ctx| {
                                     use boa_engine::job::{Job, NativeJob, TimeoutJob};
@@ -102,11 +105,12 @@ impl StoredFunction {
                                         NativeJob::new(move |ctx| {
                                             use boa_engine::js_string;
 
+                                            unsafe {
+                                                *timeout_ptr = true;
+                                            };
                                             rejector.call(
                                                 &JsValue::undefined(),
-                                                &[JsValue::from(js_string!(
-                                                    "Promise timed out after 2 seconds"
-                                                ))],
+                                                &[js_string!("Function timed out").into()],
                                                 ctx,
                                             )?;
                                             Ok(JsValue::undefined())
@@ -122,8 +126,14 @@ impl StoredFunction {
                             let result =
                                 JsPromise::race([promise.clone(), empty_promise], js_context);
 
+                            if has_hit_timeout {
+                                return Err(Error::timeout());
+                            }
                             result.await_blocking(js_context).map_err(|e| {
-                                Error::message(format!("Error awaiting JS promise: {e}"))
+                                Error::chain(
+                                    format!("Error awaiting JS promise"),
+                                    e.into_erased(js_context),
+                                )
                             })?
                         } else {
                             result
@@ -132,7 +142,10 @@ impl StoredFunction {
                             Error::message(format!("Error converting JS result to Tera value: {e}"))
                         })
                     }
-                    Err(e) => Err(Error::message(format!("Error calling JS function: {e}"))),
+                    Err(e) => Err(Error::chain(
+                        format!("Error calling JS function"),
+                        e.into_erased(js_context),
+                    )),
                 }
             }
         }

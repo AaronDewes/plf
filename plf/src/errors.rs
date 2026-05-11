@@ -152,6 +152,8 @@ pub enum ErrorKind {
     },
     /// An IO error occurred
     Io(std::io::ErrorKind),
+    /// A timeout occurred while waiting for a JS function to resolve
+    Timeout,
     /// UTF-8 conversion error when converting output to UTF-8
     ///
     /// This should not occur unless invalid UTF8 chars are rendered
@@ -211,6 +213,9 @@ impl fmt::Display for ErrorKind {
                     io_error
                 )
             }
+            ErrorKind::Timeout => {
+                write!(f, "A timeout occurred while waiting for a JS function to resolve.")
+            }
             ErrorKind::Utf8Conversion => {
                 write!(f, "Invalid UTF-8 characters found while rendering.")
             }
@@ -255,6 +260,14 @@ impl Error {
     pub fn message(message: impl ToString) -> Self {
         Self {
             kind: ErrorKind::Msg(message.to_string()),
+            source: None,
+        }
+    }
+
+    /// Creates a timeout error
+    pub fn timeout() -> Self {
+        Self {
+            kind: ErrorKind::Timeout,
             source: None,
         }
     }
