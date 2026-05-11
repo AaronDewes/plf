@@ -4,6 +4,11 @@ use std::fmt;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
+#[cfg(feature = "js")]
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+#[cfg(feature = "js")]
+use boa_engine::{JsValue, NativeFunction, js_string, object::builtins::JsFunction};
 
 use crate::args::ArgFromValue;
 use crate::errors::{Error, ReportError, TeraResult};
@@ -64,7 +69,6 @@ pub type EscapeFn = fn(&[u8], &mut dyn Write) -> std::io::Result<()>;
 /// let rendered = tera.render("hello", &context).unwrap();
 /// assert_eq!(rendered, "Hello, World!");
 /// ```
-#[derive(Clone)]
 pub struct Tera {
     /// The glob used to load templates if there was one.
     /// Only used if the `glob_fs` feature is turned on
@@ -79,18 +83,86 @@ pub struct Tera {
     global_context: Context,
     pub(crate) filters: HashMap<Cow<'static, str>, StoredFilter>,
     pub(crate) tests: HashMap<Cow<'static, str>, StoredTest>,
+    #[cfg(feature = "js")]
+    pub(crate) functions: Arc<RwLock<HashMap<Cow<'static, str>, StoredFunction>>>,
+    #[cfg(not(feature = "js"))]
     pub(crate) functions: HashMap<Cow<'static, str>, StoredFunction>,
     pub(crate) components: HashMap<String, (ComponentDefinition, Chunk)>,
     /// Custom delimiters for template syntax
     delimiters: Delimiters,
     /// Fallback prefixes to try when a template is not found by exact name.
     fallback_prefixes: Vec<String>,
+    /// JS engine
+    #[cfg(feature = "js")]
+    pub(crate) global_js_context: boa_engine::Context,
 }
 
 impl Tera {
     /// Create a new instance of Tera. Equivalent of `Tera::default()`.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[cfg(feature = "js")]
+    /// Create a new instance of Tera with JS support. Equivalent of `Tera::default()`.
+    pub fn new_with_js(js_ctx: boa_engine::Context) -> Self {
+        let mut tera = Self {
+            glob: None,
+            templates: HashMap::new(),
+            autoescape_suffixes: vec![".html", ".htm", ".xml"],
+            escape_fn: escape_html,
+            global_context: Context::new(),
+            filters: HashMap::new(),
+            tests: HashMap::new(),
+            #[cfg(feature = "js")]
+            functions: Arc::new(RwLock::new(HashMap::new())),
+            components: HashMap::new(),
+            delimiters: Delimiters::default(),
+            fallback_prefixes: Vec::new(),
+            #[cfg(feature = "js")]
+            global_js_context: js_ctx,
+        };
+        tera.register_builtin_filters();
+        tera.register_builtin_tests();
+        tera.register_builtin_functions();
+        let functions = tera.functions.clone();
+
+        tera.global_js_context
+            .register_global_callable(
+                js_string!("definePlfHandler"),
+                3,
+                // SAFETY: `from_closure` is unsafe if the closure captures data that needs to be traced by the GC,
+                // which we don't do here.
+                unsafe {
+                    NativeFunction::from_closure(move |_this, args, _ctx| {
+                        let fn_name = args
+                            .get(0)
+                            .and_then(|v| v.as_string())
+                            .ok_or_else(|| {
+                                boa_engine::JsNativeError::typ().with_message(
+                                    "First argument to definePlfHandler must be a string",
+                                )
+                            })?
+                            .to_std_string_escaped();
+                        let callback = args
+                            .get(1)
+                            .and_then(|v| v.as_object())
+                            .and_then(|o| JsFunction::from_object(o))
+                            .ok_or_else(|| {
+                                boa_engine::JsNativeError::typ().with_message(
+                                    "First argument to definePlfHandler must be a function",
+                                )
+                            })?
+                            .clone();
+                        let is_safe = args.get(2).and_then(|v| v.as_boolean()).unwrap_or(false);
+                        let mut functions = functions.write().unwrap();
+                        functions.insert(fn_name.into(), StoredFunction::new_js(callback, is_safe));
+                        Ok(JsValue::undefined())
+                    })
+                },
+            )
+            .unwrap();
+        tera
     }
 
     /// Loads all the parsed templates found in the `dir` glob.
@@ -325,7 +397,7 @@ impl Tera {
         Func: Function<Res>,
         Res: FunctionResult,
     {
-        self.functions
+        self.functions_mut()
             .insert(name.into(), StoredFunction::new(func));
     }
 
@@ -346,9 +418,20 @@ impl Tera {
             }
         }
 
-        for (name, function) in &other.functions {
-            if !self.functions.contains_key(name) {
-                self.functions.insert(name.clone(), function.clone());
+        #[cfg(feature = "js")]
+        if Arc::ptr_eq(&self.functions, &other.functions) {
+            return;
+        }
+
+        #[cfg(feature = "js")]
+        let mut self_functions = self.functions_mut();
+        #[cfg(not(feature = "js"))]
+        let self_functions = self.functions_mut();
+        let other_functions = other.functions();
+
+        for (name, function) in other_functions.iter() {
+            if !self_functions.contains_key(name) {
+                self_functions.insert(name.clone(), function.clone());
             }
         }
     }
@@ -518,7 +601,7 @@ impl Tera {
         }
 
         for (func, spans) in &tpl.function_calls {
-            if func != "super" && !self.functions.contains_key(func.as_str()) {
+            if func != "super" && !self.functions().contains_key(func.as_str()) {
                 for span in spans {
                     let err = ReportError::new(
                         format!("Unknown function `{func}`"),
@@ -1269,9 +1352,46 @@ impl Tera {
 
         Ok(())
     }
+
+    /// Evaluates JavaScript code in the global JS context and returns the result as a `JsValue`.
+    ///
+    /// JS functions can call `definePlfHandler(name, callback, isSafe)` to register a new function
+    /// that can be called from templates.
+    #[cfg(feature = "js")]
+    pub fn eval_js(&mut self, code: &str) -> boa_engine::JsResult<boa_engine::JsValue> {
+        use boa_engine::Source;
+
+        self.global_js_context
+            .eval(Source::from_bytes(code.as_bytes()))
+    }
+
+    #[cfg(feature = "js")]
+    pub(crate) fn functions(
+        &'_ self,
+    ) -> RwLockReadGuard<'_, HashMap<Cow<'static, str>, StoredFunction>> {
+        self.functions.read().unwrap()
+    }
+
+    #[cfg(not(feature = "js"))]
+    pub(crate) fn functions(&self) -> &HashMap<Cow<'static, str>, StoredFunction> {
+        &self.functions
+    }
+
+    #[cfg(feature = "js")]
+    pub(crate) fn functions_mut(
+        &'_ mut self,
+    ) -> RwLockWriteGuard<'_, HashMap<Cow<'static, str>, StoredFunction>> {
+        self.functions.write().unwrap()
+    }
+
+    #[cfg(not(feature = "js"))]
+    pub(crate) fn functions_mut(&mut self) -> &mut HashMap<Cow<'static, str>, StoredFunction> {
+        &mut self.functions
+    }
 }
 
 impl Default for Tera {
+    #[cfg(not(feature = "js"))]
     fn default() -> Self {
         let mut tera = Self {
             glob: None,
@@ -1291,6 +1411,11 @@ impl Default for Tera {
         tera.register_builtin_functions();
         tera
     }
+
+    #[cfg(feature = "js")]
+    fn default() -> Self {
+        Self::new_with_js(boa_engine::Context::default())
+    }
 }
 
 impl fmt::Debug for Tera {
@@ -1301,7 +1426,7 @@ impl fmt::Debug for Tera {
             .field("autoescape_suffixes", &self.autoescape_suffixes)
             .field("filters", &self.filters.len())
             .field("tests", &self.tests.len())
-            .field("functions", &self.functions.len())
+            .field("functions", &self.functions().len())
             .field("components", &self.components.len())
             .field("delimiters", &self.delimiters)
             .finish_non_exhaustive()

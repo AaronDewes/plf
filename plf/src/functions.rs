@@ -59,6 +59,14 @@ impl StoredFunction {
         }
     }
 
+    #[cfg(feature = "js")]
+    pub fn new_js(js_func: boa_engine::object::builtins::JsFunction, is_safe: bool) -> Self {
+        StoredFunction {
+            inner: FunctionInner::Js(js_func),
+            is_safe,
+        }
+    }
+
     pub fn call(&self, kwargs: Kwargs, state: &mut State) -> TeraResult<Value> {
         match &self.inner {
             FunctionInner::Rust(func) => func(kwargs, state),
