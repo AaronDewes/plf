@@ -20,7 +20,7 @@ pub(crate) struct VirtualMachine<'tera> {
     autoescape_override: Option<bool>,
 }
 
-impl<'tera> VirtualMachine<'tera> {
+impl<'tera, 'js> VirtualMachine<'tera> {
     pub fn new(tera: &'tera Tera, template: &'tera Template) -> Self {
         Self {
             tera,
@@ -48,7 +48,7 @@ impl<'tera> VirtualMachine<'tera> {
 
     pub(crate) fn interpret(
         &self,
-        state: &mut State<'tera>,
+        state: &mut State<'tera, 'js>,
         output: &mut impl Write,
     ) -> TeraResult<()> {
         let mut ip = 0;
@@ -839,7 +839,7 @@ impl<'tera> VirtualMachine<'tera> {
 
     fn undefined_var_error(
         &self,
-        state: &State<'tera>,
+        state: &State<'tera, 'js>,
         chunk: &Chunk,
         name: &str,
         span: &Span,
@@ -906,7 +906,7 @@ impl<'tera> VirtualMachine<'tera> {
     fn render_include(
         &self,
         name: &str,
-        state: &State<'tera>,
+        state: &State<'tera, 'js>,
         output: &mut impl Write,
     ) -> TeraResult<()> {
         let tpl = self.tera.must_get_template(name)?;

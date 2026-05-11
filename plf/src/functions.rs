@@ -64,6 +64,11 @@ impl StoredFunction {
             FunctionInner::Rust(func) => func(kwargs, state),
             #[cfg(feature = "js")]
             FunctionInner::Js(js_func) => {
+                let Some(ref mut js_context) = state.js_context else {
+                    return Err(Error::message(
+                        "JS function called but no JS context is available in the state",
+                    ));
+                };
                 use boa_engine::{
                     JsValue,
                     value::{TryFromJs, TryIntoJs},
@@ -71,12 +76,12 @@ impl StoredFunction {
 
                 match js_func.call(
                     &JsValue::undefined(),
-                    &[kwargs.try_into_js(&mut state.js_context).map_err(|e| {
+                    &[kwargs.try_into_js(*js_context).map_err(|e| {
                         Error::message(format!("Error converting kwargs to JS value: {e}"))
                     })?],
-                    &mut state.js_context,
+                    *js_context,
                 ) {
-                    Ok(result) => Value::try_from_js(&result, &mut state.js_context).map_err(|e| {
+                    Ok(result) => Value::try_from_js(&result, *js_context).map_err(|e| {
                         Error::message(format!(
                             "Error converting JS function result to Tera Value: {e}"
                         ))
