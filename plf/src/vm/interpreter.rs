@@ -491,6 +491,7 @@ impl<'tera> VirtualMachine<'tera> {
                         let val = match f.call(
                             Kwargs::new(Arc::new(kwargs.into_map().unwrap())),
                             state,
+                            #[cfg(feature = "js")]
                             &mut self.tera.global_js_context.lock().unwrap(),
                         ) {
                             Ok(v) => v,
