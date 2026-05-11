@@ -2,8 +2,8 @@
 //!
 //! Run with: `cargo run --example dashboard`
 
-use serde::Serialize;
 use plf::{Context, Tera};
+use serde::Serialize;
 
 #[derive(Serialize)]
 struct Order {

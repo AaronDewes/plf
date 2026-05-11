@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use plf::{ComponentArgType, Tera, Value};
+use std::collections::HashSet;
 
 #[test]
 fn test_get_component_definition() {

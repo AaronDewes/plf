@@ -488,9 +488,11 @@ impl<'tera> VirtualMachine<'tera> {
                             .push(Value::safe_string(&val), Some(current_ip..=current_ip));
                     } else {
                         let f = &self.tera.functions()[name.as_str()];
-                        let val = match f
-                            .call(Kwargs::new(Arc::new(kwargs.into_map().unwrap())), state, &mut self.tera.global_js_context.lock().unwrap())
-                        {
+                        let val = match f.call(
+                            Kwargs::new(Arc::new(kwargs.into_map().unwrap())),
+                            state,
+                            &mut self.tera.global_js_context.lock().unwrap(),
+                        ) {
                             Ok(v) => v,
                             Err(err) => {
                                 rendering_error!(format!("{err}"), Some(current_ip..=current_ip))

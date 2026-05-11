@@ -1,6 +1,6 @@
+use plf::{Context, Tera};
 use serde::Serialize;
 use std::hint::black_box;
-use plf::{Context, Tera};
 
 #[derive(Serialize)]
 struct Team {
