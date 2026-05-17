@@ -1,11 +1,11 @@
 [package]
 name = "plf"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 description = "A template engine for Rust inspired by Tera/Jinja2/Django"
-repository = "https://github.com/Keats/tera2"
-documentation = "https://docs.rs/tera"
+repository = "https://github.com/AaronDewes/plf"
+documentation = "https://docs.rs/plf"
 readme = "../README.md"
 keywords = ["template", "html", "django", "markup", "jinja2"]
 categories = ["template-engine"]
