@@ -91,45 +91,7 @@ impl StoredFunction {
                 ) {
                     Ok(result) => {
                         let val = if let Some(promise) = result.as_promise() {
-                            use boa_engine::object::builtins::JsPromise;
-
-                            let mut has_hit_timeout = false;
-                            let timeout_ptr = &mut has_hit_timeout as *mut bool;
-
-                            let empty_promise = JsPromise::new(
-                                |resolvers, ctx| {
-                                    use boa_engine::job::{Job, NativeJob, TimeoutJob};
-
-                                    let rejector = resolvers.reject.clone();
-                                    let job = TimeoutJob::new(
-                                        NativeJob::new(move |ctx| {
-                                            use boa_engine::js_string;
-
-                                            unsafe {
-                                                *timeout_ptr = true;
-                                            };
-                                            rejector.call(
-                                                &JsValue::undefined(),
-                                                &[js_string!("Function timed out").into()],
-                                                ctx,
-                                            )?;
-                                            Ok(JsValue::undefined())
-                                        }),
-                                        2000,
-                                    );
-                                    ctx.enqueue_job(Job::TimeoutJob(job));
-                                    Ok(JsValue::undefined())
-                                },
-                                js_context,
-                            );
-
-                            let result =
-                                JsPromise::race([promise.clone(), empty_promise], js_context);
-
-                            if has_hit_timeout {
-                                return Err(Error::timeout());
-                            }
-                            result.await_blocking(js_context).map_err(|e| {
+                            promise.await_blocking(js_context).map_err(|e| {
                                 Error::chain(
                                     format!("Error awaiting JS promise"),
                                     e.into_erased(js_context),
