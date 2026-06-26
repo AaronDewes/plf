@@ -8,7 +8,8 @@ use crate::errors::{Error, ErrorKind, ReportError, TeraResult};
 use crate::parsing::ast::{
     Array, ArrayEntry, BinaryOperation, Block, BlockSet, ComponentArgument, ComponentCall,
     ComponentDefinition, Expression, Filter, FilterSection, ForLoop, FunctionCall, GetAttr,
-    GetItem, If, Include, Map, MapEntry, Set, Slice, Ternary, Test, Type, UnaryOperation, Var,
+    GetItem, If, Include, ListComprehension, Map, MapEntry, Set, Slice, Ternary, Test, Type,
+    UnaryOperation, Var,
 };
 use crate::parsing::ast::{BinaryOperator, Node, UnaryOperator};
 use crate::parsing::lexer::{Token, tokenize};
@@ -16,8 +17,8 @@ use crate::utils::{Span, Spanned};
 use crate::value::{Key, Value};
 use crate::{HashMap, HashSet};
 
-/// parse_expression can call itself max 100 times, after that it's an error
-const MAX_EXPR_RECURSION: usize = 100;
+/// Maximum recursion depth for the parser, shared between expression and statement parsing
+const MAX_RECURSION_DEPTH: usize = 40;
 /// We only allow that many dimensions in an array literal
 const MAX_DIMENSION_ARRAY: usize = 2;
 /// How many nesting of brackets can we have in an variable, eg `a[b[e]]` counts as 2
@@ -33,6 +34,11 @@ fn unary_binding_power(op: UnaryOperator) -> ((), u8) {
         Minus => ((), 20),
     }
 }
+
+/// Pratt l_bp for the ternary `if`.
+/// It's not a binary op, but we do want to not get those sometimes (eg list comprehension value
+/// expression)
+const TERNARY_L_BP: u8 = 0;
 
 fn binary_binding_power(op: BinaryOperator) -> (u8, u8) {
     use BinaryOperator::*;
@@ -87,12 +93,13 @@ enum BodyContext {
     Block,
     If,
     ComponentDefinition,
-    FilterSection,
+    /// A filter section/set block/component call
+    Capture,
 }
 
 impl BodyContext {
     fn can_contain_blocks(&self) -> bool {
-        matches!(self, BodyContext::Block | BodyContext::FilterSection)
+        matches!(self, BodyContext::Block | BodyContext::Capture)
     }
 }
 
@@ -119,9 +126,8 @@ pub struct Parser<'a> {
     body_contexts: Vec<BodyContext>,
     // The current array dimension, to avoid stack overflows with too many of them
     array_dimension: usize,
-    // We limit the length of an expression to avoid stack overflows with crazy expressions like
-    // 100 `(`
-    num_expr_calls: usize,
+    // Current parser recursion depth
+    recursion_depth: usize,
     // We limit the number of nesting for brackets in idents
     num_left_brackets: usize,
     blocks_seen: HashSet<String>,
@@ -139,7 +145,7 @@ impl<'a> Parser<'a> {
             next: None,
             current_span: Span::default(),
             body_contexts: Vec::new(),
-            num_expr_calls: 0,
+            recursion_depth: 0,
             array_dimension: 0,
             num_left_brackets: 0,
             blocks_seen: HashSet::with_capacity(10),
@@ -369,6 +375,7 @@ impl<'a> Parser<'a> {
 
     fn parse_kwargs(&mut self) -> TeraResult<HashMap<String, Expression>> {
         let mut kwargs = HashMap::new();
+        let mut kwarg_spans: HashMap<&str, Span> = HashMap::new();
         expect_token!(self, Token::LeftParen, "(")?;
 
         loop {
@@ -384,7 +391,17 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            let (arg_name, _) = expect_token!(self, Token::Ident(id) => id, "identifier")?;
+            let (arg_name, arg_name_span) =
+                expect_token!(self, Token::Ident(id) => id, "identifier")?;
+            if let Some(prev_span) = kwarg_spans.get(arg_name) {
+                return Err(self.syntax_error_with_note(
+                    format!("Keyword argument `{arg_name}` is defined more than once"),
+                    &arg_name_span,
+                    "first defined here",
+                    prev_span,
+                ));
+            }
+            kwarg_spans.insert(arg_name, arg_name_span);
             expect_token!(self, Token::Assign, "=")?;
             let value = self.parse_expression(0)?;
             kwargs.insert(arg_name.to_string(), value);
@@ -640,6 +657,11 @@ impl<'a> Parser<'a> {
             }
 
             let expr = self.inner_parse_expression(0)?;
+
+            if items.is_empty() && matches!(self.next, Some(Ok((Token::Ident("for"), _)))) {
+                self.array_dimension -= 1;
+                return self.parse_list_comprehension(expr, span);
+            }
             if !expr.is_literal() {
                 literal_only = false;
             }
@@ -661,14 +683,20 @@ impl<'a> Parser<'a> {
     /// to avoid stack overflow. In practice, normal users will not run into the limit at all.
     /// We're talking 100 parentheses for example
     fn inner_parse_expression(&mut self, min_bp: u8) -> TeraResult<Expression> {
-        self.num_expr_calls += 1;
-        if self.num_expr_calls > MAX_EXPR_RECURSION {
+        self.recursion_depth += 1;
+        if self.recursion_depth > MAX_RECURSION_DEPTH {
+            self.recursion_depth -= 1;
             return Err(Error::syntax_error(
                 "The expression is too complex".to_string(),
                 &self.current_span,
             ));
         }
+        let res = self.parse_expr_bp(min_bp);
+        self.recursion_depth -= 1;
+        res
+    }
 
+    fn parse_expr_bp(&mut self, min_bp: u8) -> TeraResult<Expression> {
         let (token, mut span) = self.next_or_error()?;
 
         let mut lhs = match token {
@@ -724,9 +752,8 @@ impl<'a> Parser<'a> {
             Token::LeftBrace => self.parse_map()?,
             Token::LeftBracket => self.parse_array()?,
             Token::LeftParen => {
-                let mut lhs = self.inner_parse_expression(0)?;
+                let lhs = self.inner_parse_expression(0)?;
                 expect_token!(self, Token::RightParen, ")")?;
-                lhs.expand_span(&self.current_span);
                 lhs
             }
             _ => {
@@ -786,6 +813,9 @@ impl<'a> Parser<'a> {
                 }
                 // A ternary
                 Token::Ident("if") => {
+                    if TERNARY_L_BP < min_bp {
+                        break;
+                    }
                     self.next_or_error()?;
                     let expr = self.parse_expression(0)?;
                     expect_token!(self, Token::Ident("else"), "else")?;
@@ -937,7 +967,9 @@ impl<'a> Parser<'a> {
         expect_token!(self, Token::TagEnd(..), "%}")?;
 
         // Parse body content until {% </component> %}
+        self.body_contexts.push(BodyContext::Capture);
         let body = self.parse_until(|tok| matches!(tok, Token::ClosingTagStart))?;
+        self.body_contexts.pop();
 
         // Check for unclosed component (EOF reached)
         if self.next.is_none() {
@@ -972,8 +1004,75 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expression(&mut self, min_bp: u8) -> TeraResult<Expression> {
-        self.num_expr_calls = 0;
         self.inner_parse_expression(min_bp)
+    }
+
+    fn parse_list_comprehension(
+        &mut self,
+        expr: Expression,
+        mut span: Span,
+    ) -> TeraResult<Expression> {
+        expect_token!(self, Token::Ident("for"), "for")?;
+        // TODO: DRY that with forloop
+        let (mut value, _) = expect_token!(self, Token::Ident(id) => id, "identifier")?;
+        if RESERVED_NAMES.contains(&value) {
+            return Err(Error::syntax_error(
+                format!(
+                    "{value} is a reserved keyword of Tera, it cannot be used as a list comprehension variable."
+                ),
+                &self.current_span,
+            ));
+        }
+
+        // Do we have a key?
+        let mut key = None;
+        if matches!(self.next, Some(Ok((Token::Comma, _)))) {
+            self.next_or_error()?;
+            let (val, _) = expect_token!(self, Token::Ident(id) => id, "identifier")?;
+            if RESERVED_NAMES.contains(&val) {
+                return Err(Error::syntax_error(
+                    format!(
+                        "{val} is a reserved keyword of Tera, it cannot be used as a list comprehension variable."
+                    ),
+                    &self.current_span,
+                ));
+            }
+            key = Some(value.to_string());
+            value = val;
+        }
+
+        expect_token!(self, Token::Ident("in"), "in")?;
+
+        let target = self.inner_parse_expression(TERNARY_L_BP + 1)?;
+
+        let condition = if matches!(self.next, Some(Ok((Token::Ident("if"), _)))) {
+            self.next_or_error()?;
+            Some(self.inner_parse_expression(TERNARY_L_BP + 1)?)
+        } else {
+            None
+        };
+
+        if matches!(self.next, Some(Ok((Token::Ident("for"), _)))) {
+            self.next_or_error()?;
+            return Err(Error::syntax_error(
+                "List comprehensions support only a single `for` clause.".to_string(),
+                &self.current_span,
+            ));
+        }
+
+        expect_token!(self, Token::RightBracket, "]")?;
+        span.expand(&self.current_span);
+
+        Ok(Expression::ListComprehension(Spanned::new(
+            ListComprehension {
+                expr,
+                key,
+                value: value.to_string(),
+                target,
+                condition,
+            },
+            span,
+        )))
     }
 
     fn parse_for_loop(&mut self) -> TeraResult<ForLoop> {
@@ -1008,6 +1107,7 @@ impl<'a> Parser<'a> {
         expect_token!(self, Token::TagEnd(..), "%}")?;
         let body =
             self.parse_until(|tok| matches!(tok, Token::Ident("endfor") | Token::Ident("else")))?;
+        self.body_contexts.pop();
         let mut else_body = None;
         if matches!(self.next, Some(Ok((Token::Ident("else"), _)))) {
             self.next_or_error()?;
@@ -1016,7 +1116,6 @@ impl<'a> Parser<'a> {
         }
         // eat the endfor
         self.next_or_error()?;
-        self.body_contexts.pop();
 
         Ok(ForLoop {
             key,
@@ -1334,7 +1433,9 @@ impl<'a> Parser<'a> {
                     }
                 }
 
+                self.body_contexts.push(BodyContext::Capture);
                 let body = self.parse_until(|tok| matches!(tok, Token::Ident("endset")))?;
+                self.body_contexts.pop();
                 self.next_or_error()?;
                 Node::BlockSet(BlockSet {
                     name: name.to_string(),
@@ -1456,7 +1557,7 @@ impl<'a> Parser<'a> {
                 Ok(Some(Node::If(node)))
             }
             Token::Ident("filter") => {
-                self.body_contexts.push(BodyContext::FilterSection);
+                self.body_contexts.push(BodyContext::Capture);
                 let (name, ident_span) = expect_token!(self, Token::Ident(s) => s, "identifier")?;
 
                 let kwargs = if matches!(self.next, Some(Ok((Token::LeftParen, _)))) {
@@ -1483,12 +1584,25 @@ impl<'a> Parser<'a> {
             }
             Token::Ident("break") | Token::Ident("continue") => {
                 let is_break = tag_token == Token::Ident("break");
-                if !self.is_in_loop() {
+                let kw = if is_break { "break" } else { "continue" };
+                let mut in_loop = false;
+                for ctx in self.body_contexts.iter().rev() {
+                    if *ctx == BodyContext::ForLoop {
+                        in_loop = true;
+                        break;
+                    }
+                    if *ctx == BodyContext::Capture {
+                        return Err(Error::syntax_error(
+                            format!(
+                                "`{kw}` cannot be used inside a filter section, `set` block or component body"
+                            ),
+                            &self.current_span,
+                        ));
+                    }
+                }
+                if !in_loop {
                     return Err(Error::syntax_error(
-                        format!(
-                            "{} can only be used in a for loop",
-                            if is_break { "break" } else { "continue" }
-                        ),
+                        format!("{kw} can only be used in a for loop"),
                         &self.current_span,
                     ));
                 }
@@ -1522,6 +1636,24 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_until<F: Fn(&Token) -> bool>(&mut self, end_check_fn: F) -> TeraResult<Vec<Node>> {
+        // We want to avoid stack overflow when having super nested templates, eg 40+ nested if
+        self.recursion_depth += 1;
+        if self.recursion_depth > MAX_RECURSION_DEPTH {
+            self.recursion_depth -= 1;
+            return Err(Error::syntax_error(
+                "The template nesting is too deep".to_string(),
+                &self.current_span,
+            ));
+        }
+        let res = self.parse_until_inner(end_check_fn);
+        self.recursion_depth -= 1;
+        res
+    }
+
+    fn parse_until_inner<F: Fn(&Token) -> bool>(
+        &mut self,
+        end_check_fn: F,
+    ) -> TeraResult<Vec<Node>> {
         let mut nodes = Vec::new();
 
         while let Some((token, _)) = self.next()? {

@@ -33,9 +33,13 @@ pub struct State<'tera> {
     pub(crate) escape_buffer: Vec<u8>,
     /// Used in includes only
     pub(crate) include_parent: Option<&'tera State<'tera>>,
+    /// Which block we are asked to render
+    pub(crate) capture_block: Option<&'tera str>,
+    /// The buffer just for the one block we want to return
+    pub(crate) block_buffer: Vec<u8>,
 
-    /// (block name, (all_chunks, level))
-    pub(crate) blocks: BTreeMap<&'tera str, (Vec<&'tera Chunk>, usize)>,
+    /// (block name, all_chunks, level).
+    pub(crate) blocks: Vec<(&'tera str, &'tera Vec<Chunk>, usize)>,
     pub(crate) current_block_name: Option<&'tera str>,
     /// Reference to registered filters for calling filters from within filters (e.g., map filter)
     pub(crate) filters: Option<&'tera HashMap<Cow<'static, str>, StoredFilter>>,
@@ -61,7 +65,9 @@ impl<'t> State<'t> {
             capture_buffers: Vec::with_capacity(4),
             escape_buffer: Vec::with_capacity(128),
             include_parent: None,
-            blocks: BTreeMap::new(),
+            capture_block: None,
+            block_buffer: Vec::new(),
+            blocks: Vec::new(),
             current_block_name: None,
             filters: None,
         }
@@ -157,10 +163,9 @@ impl<'t> State<'t> {
 
     pub(crate) fn load_name(&mut self, name: &str, span_idx: u32) {
         if name == MAGICAL_DUMP_VAR {
-            self.stack.push(self.dump_context(), None);
+            self.stack.push(self.dump_context(), span_idx..=span_idx);
         } else {
-            self.stack
-                .push(self.get_value(name), Some(span_idx..=span_idx));
+            self.stack.push(self.get_value(name), span_idx..=span_idx);
         }
     }
 

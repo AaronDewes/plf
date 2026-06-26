@@ -19,7 +19,6 @@
 //! - Extensible with custom filters and functions
 //! - Automatic escaping of HTML/XML by default
 //! - Template caching and auto-reloading for efficient development
-//! - Built-in support for JSON and other data formats
 //! - Comprehensive error messages and debugging information
 //!
 //! ## Example
@@ -29,14 +28,13 @@
 //!
 //! // Create a new Tera instance and add a template from a string
 //! let mut tera = Tera::new();
-//! tera.register_filter("do_nothing", do_nothing_filter);
-//! tera.load_from_glob("examples/basic/templates/**/*")?;
+//! tera.add_raw_template("hello", "Hello, {{ name }}!").unwrap();
 //! // Prepare the context with some data
 //! let mut context = plf::Context::new();
 //! context.insert("name", "World");
 //!
 //! // Render the template with the given context
-//! let rendered = tera.render("hello", &context)?;
+//! let rendered = tera.render("hello", &context).unwrap();
 //! assert_eq!(rendered, "Hello, World!");
 //! ```
 //!
@@ -77,15 +75,17 @@ pub mod value;
 pub(crate) mod vm;
 
 pub use crate::tera::{EscapeFn, Tera};
-pub use args::Kwargs;
+pub use args::{ArgFromValue, Kwargs};
 pub use components::{ComponentArg, ComponentArgType, ComponentInfo};
 pub use context::Context;
 pub use delimiters::Delimiters;
-pub use errors::{Error, ErrorKind, TeraResult};
+pub use errors::{Error, ErrorKind, ReportError, TeraResult};
 pub use filters::Filter;
 pub use functions::Function;
-pub use tests::Test;
-pub use utils::escape_html;
+pub use tests::{Test, TestResult};
+pub use utils::{Span, escape_html};
+#[doc(inline)]
+pub use value::FunctionResult;
 pub use value::number::Number;
 pub use value::{Map, Value};
 pub use vm::state::State;

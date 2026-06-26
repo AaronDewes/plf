@@ -1,5 +1,5 @@
 ---
-source: tera/src/snapshot_tests/compiler.rs
+source: plf/src/snapshot_tests/compiler.rs
 expression: s
 input_file: plf/src/snapshot_tests/compiler_inputs/blocks/simple.txt
 ---

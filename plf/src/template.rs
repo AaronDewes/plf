@@ -13,6 +13,8 @@ pub struct Template {
     pub name: String,
     pub(crate) source: String,
     pub(crate) path: Option<String>,
+    /// Whether this template was loaded by `load_from_glob`
+    pub(crate) from_glob: bool,
     pub(crate) chunk: Chunk,
     /// The blocks contained in this template only
     pub(crate) blocks: HashMap<String, Chunk>,
@@ -25,7 +27,9 @@ pub struct Template {
     pub(crate) function_calls: HashMap<String, Vec<Span>>,
     pub(crate) include_calls: HashMap<String, Vec<Span>>,
     /// The number of bytes of raw content in its parents and itself
-    pub(crate) raw_content_num_bytes: usize,
+    pub(crate) total_content_num_bytes: usize,
+    /// The exact `{% extends %}` target in the source
+    pub(crate) extends: Option<String>,
     /// The full list of parent templates names
     pub(crate) parents: Vec<String>,
     pub(crate) block_lineage: HashMap<String, Vec<Chunk>>,
@@ -57,11 +61,7 @@ impl Template {
                 _ => unreachable!("Parser got something other than a SyntaxError: {e}"),
             },
         };
-        let parents = if let Some(p) = parser_output.parent {
-            vec![p]
-        } else {
-            vec![]
-        };
+        let extends = parser_output.parent;
 
         let mut body_compiler = Compiler::new(tpl_name);
         body_compiler.compile(parser_output.nodes);
@@ -79,8 +79,6 @@ impl Template {
                 (name, chunk)
             })
             .collect();
-
-        let raw_content_num_bytes = body_compiler.raw_content_num_bytes;
 
         let mut filter_calls = body_compiler.filter_calls;
         let mut test_calls = body_compiler.test_calls;
@@ -123,11 +121,13 @@ impl Template {
             name: tpl_name.to_string(),
             source: source.to_string(),
             path,
+            from_glob: false,
             blocks,
             block_name_spans,
-            raw_content_num_bytes,
+            total_content_num_bytes: source.len(),
             chunk,
-            parents,
+            extends,
+            parents: Vec::new(),
             components,
             component_calls,
             filter_calls,
@@ -141,14 +141,20 @@ impl Template {
     }
 
     pub(crate) fn size_hint(&self) -> usize {
-        (self.raw_content_num_bytes * 2).next_power_of_two()
+        (self.total_content_num_bytes * 2).next_power_of_two()
     }
 }
 
 /// Recursive fn that finds all the includes to detect if there are some cycles
 pub(crate) fn check_include_cycles(tera: &Tera, start: &Template) -> Result<(), Error> {
     let mut stack: Vec<String> = vec![start.name.clone()];
-    fn walk(tera: &Tera, current: &Template, stack: &mut Vec<String>) -> Result<(), Error> {
+    let mut visited: HashSet<String> = HashSet::new();
+    fn walk(
+        tera: &Tera,
+        current: &Template,
+        stack: &mut Vec<String>,
+        visited: &mut HashSet<String>,
+    ) -> Result<(), Error> {
         let mut names: Vec<&String> = current.include_calls.keys().collect();
         names.sort();
         for include_name in names {
@@ -160,13 +166,17 @@ pub(crate) fn check_include_cycles(tera: &Tera, start: &Template) -> Result<(), 
                 chain.push(resolved.to_string());
                 return Err(Error::circular_include(resolved, chain));
             }
+            if visited.contains(resolved) {
+                continue;
+            }
             stack.push(resolved.to_string());
-            walk(tera, &tera.templates[resolved], stack)?;
+            walk(tera, &tera.templates[resolved], stack, visited)?;
             stack.pop();
+            visited.insert(resolved.to_string());
         }
         Ok(())
     }
-    walk(tera, start, &mut stack)
+    walk(tera, start, &mut stack, &mut visited)
 }
 
 /// Recursive fn that finds all the parents and put them in an ordered Vec from closest to first parent
@@ -177,13 +187,14 @@ pub(crate) fn find_parents(
     template: &Template,
     mut parents: Vec<String>,
 ) -> Result<Vec<String>, Error> {
-    if !parents.is_empty() && start.name == template.name {
-        return Err(Error::circular_extend(&start.name, parents));
-    }
-
-    match template.parents.last() {
-        Some(ref p) => match tera.resolve_template_name(p) {
+    match &template.extends {
+        Some(p) => match tera.resolve_template_name(p) {
             Some(resolved) => {
+                if resolved == start.name || parents.iter().any(|name| name == resolved) {
+                    let mut chain = parents.clone();
+                    chain.push(resolved.to_string());
+                    return Err(Error::circular_extend(&start.name, chain));
+                }
                 let parent = &tera.templates[resolved];
                 parents.push(parent.name.clone());
                 find_parents(tera, start, parent, parents)
@@ -222,6 +233,25 @@ mod tests {
         let parents_c =
             find_parents(&tera, &tera.templates["c"], &tera.templates["c"], vec![]).unwrap();
         assert_eq!(parents_c, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn detects_circular_extends() {
+        let cases = vec![
+            vec![("a", "{% extends 'a' %}")],
+            vec![("a", "{% extends 'b' %}"), ("b", "{% extends 'a' %}")],
+            vec![
+                ("a", "{% extends 'b' %}"),
+                ("b", "{% extends 'c' %}"),
+                ("c", "{% extends 'b' %}"),
+            ],
+        ];
+
+        for templates in cases {
+            let mut tera = Tera::default();
+            let res = tera.add_raw_templates(templates).unwrap_err();
+            assert!(matches!(res.kind(), ErrorKind::CircularExtend { .. }));
+        }
     }
 
     #[test]

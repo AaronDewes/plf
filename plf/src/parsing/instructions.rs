@@ -1,5 +1,6 @@
 use crate::utils::Span;
 use crate::value::Value;
+use crate::vm::state::MAGICAL_DUMP_VAR;
 use std::fmt;
 use std::fmt::Formatter;
 use std::ops::RangeInclusive;
@@ -74,6 +75,9 @@ pub(crate) enum Instruction {
 
     /// Start an iteration. `true` if it's iterating on (key, value)
     StartIterate(bool),
+    /// Like `StartIterate` but for list comprehension. It's a separate instruction
+    /// since we don't expose loop.* things in it despite desugaring to a loop
+    StartIterateComprehension(bool),
     /// Start to iterate on the value at the top of the stack. The integer is the ip to jump to
     /// when the for loop is over
     Iterate(usize),
@@ -86,6 +90,9 @@ pub(crate) enum Instruction {
     Break,
     /// At the end of a loop we want to remove it
     PopLoop,
+
+    /// Used by list comprehensions
+    AppendToList,
 
     // math
     Mul,
@@ -232,8 +239,9 @@ impl Chunk {
             // Record the mapping for this instruction
             index_map[i] = optimized.len();
 
-            // Try to collect a path: LoadName followed by any number of LoadAttr
-            if matches!(&old_instructions[i].0, Instruction::LoadName(_)) {
+            // Try to collect a path: LoadName followed by any number of LoadAttr except for the magic dump var
+            if matches!(&old_instructions[i].0, Instruction::LoadName(n) if n.as_str() != MAGICAL_DUMP_VAR)
+            {
                 // Take ownership of the LoadName instruction
                 let (instr, spans) =
                     std::mem::replace(&mut old_instructions[i], placeholder.clone());

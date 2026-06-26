@@ -161,11 +161,11 @@ impl SmartString {
         }
     }
 
-    /// Get string content as Arc<str>, cloning only for small strings
-    pub(crate) fn into_arc_str(self) -> Arc<str> {
+    /// Get string content as Arc<str>, allocating only for small strings
+    pub(crate) fn to_arc_str(&self) -> Arc<str> {
         match self {
             Self::Small { .. } => Arc::from(self.as_str()),
-            Self::Large(arc, _) => arc,
+            Self::Large(arc, _) => Arc::clone(arc),
         }
     }
 }
@@ -228,6 +228,50 @@ impl fmt::Debug for Value {
     }
 }
 
+fn cmp_f64_to_number(x: f64, other: &Value) -> Option<Ordering> {
+    if let Some(n) = other.as_i128() {
+        Some(cmp_f64_to_i128(x, n))
+    } else {
+        other.as_u128().map(|n| cmp_f64_to_u128(x, n))
+    }
+}
+
+fn cmp_f64_to_i128(x: f64, n: i128) -> Ordering {
+    if x.is_nan() {
+        return Ordering::Greater;
+    }
+    if x < i128::MIN as f64 {
+        return Ordering::Less;
+    }
+    if x >= i128::MAX as f64 {
+        return Ordering::Greater;
+    }
+
+    let floor = x.floor();
+    match (floor as i128).cmp(&n) {
+        Ordering::Equal if x > floor => Ordering::Greater,
+        ord => ord,
+    }
+}
+
+fn cmp_f64_to_u128(x: f64, n: u128) -> Ordering {
+    if x.is_nan() {
+        return Ordering::Greater;
+    }
+    if x < 0.0 {
+        return Ordering::Less;
+    }
+    if x >= u128::MAX as f64 {
+        return Ordering::Greater;
+    }
+
+    let floor = x.floor();
+    match (floor as u128).cmp(&n) {
+        Ordering::Equal if x > floor => Ordering::Greater,
+        ord => ord,
+    }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (&self.inner, &other.inner) {
@@ -243,9 +287,8 @@ impl PartialEq for Value {
             (ValueInner::Map(v), ValueInner::Map(v2)) => v == v2,
             // Then the numbers
             (ValueInner::F64(a), ValueInner::F64(b)) => (a.is_nan() && b.is_nan()) || a == b,
-            // First if there's a float we need to convert to float
-            (ValueInner::F64(v), _) => Some(*v) == other.as_f64(),
-            (_, ValueInner::F64(v)) => Some(*v) == self.as_f64(),
+            (ValueInner::F64(v), _) => cmp_f64_to_number(*v, other) == Some(Ordering::Equal),
+            (_, ValueInner::F64(v)) => cmp_f64_to_number(*v, self) == Some(Ordering::Equal),
             (
                 ValueInner::U64(_) | ValueInner::I64(_) | ValueInner::U128(_) | ValueInner::I128(_),
                 ValueInner::U64(_) | ValueInner::I64(_) | ValueInner::U128(_) | ValueInner::I128(_),
@@ -273,10 +316,18 @@ impl PartialOrd for Value {
             (ValueInner::Bytes(v), ValueInner::Bytes(v2)) => v.partial_cmp(v2),
             (ValueInner::String(v), ValueInner::String(v2)) => v.as_str().partial_cmp(v2.as_str()),
             // Then the numbers
-            (ValueInner::F64(a), ValueInner::F64(b)) => Some(a.total_cmp(b)),
-            // First if there's a float we need to convert to float
-            (ValueInner::F64(v), _) => v.partial_cmp(&other.as_f64()?),
-            (_, ValueInner::F64(v)) => self.as_f64()?.partial_cmp(v),
+            (ValueInner::F64(a), ValueInner::F64(b)) => {
+                let ord = a
+                    .partial_cmp(b)
+                    .unwrap_or_else(|| match (a.is_nan(), b.is_nan()) {
+                        (false, true) => Ordering::Less,
+                        (true, false) => Ordering::Greater,
+                        _ => Ordering::Equal,
+                    });
+                Some(ord)
+            }
+            (ValueInner::F64(v), _) => cmp_f64_to_number(*v, other),
+            (_, ValueInner::F64(v)) => cmp_f64_to_number(*v, self).map(Ordering::reverse),
             (
                 ValueInner::U64(_) | ValueInner::I64(_) | ValueInner::U128(_) | ValueInner::I128(_),
                 ValueInner::U64(_) | ValueInner::I64(_) | ValueInner::U128(_) | ValueInner::I128(_),
@@ -449,7 +500,8 @@ impl Value {
             ValueInner::F64(v) => {
                 // We could use ryu to print floats but it doesn't match the output from
                 // the std so tests become annoying.
-                write!(f, "{v}")
+                // Debug rather than Display so integral floats keep their `.0`
+                write!(f, "{v:?}")
             }
             ValueInner::U64(v) => {
                 #[cfg(feature = "no_fmt")]
@@ -638,11 +690,27 @@ impl Value {
         }
     }
 
-    /// Consumes the current Value to return its inner Map if it is one, otherwise None.
+    /// Consumes the current Value to return its inner `Map` if it is one, otherwise None.
     pub fn into_map(self) -> Option<Map> {
         match self.inner {
             ValueInner::Map(arc) => Some(Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone())),
             _ => None,
+        }
+    }
+
+    /// Consumes the Value to return its inner `Arc<Map>` if it is a map, otherwise None.
+    pub(crate) fn into_map_arc(self) -> Option<Arc<Map>> {
+        match self.inner {
+            ValueInner::Map(arc) => Some(arc),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn empty_map() -> Value {
+        static EMPTY_MAP: std::sync::LazyLock<Arc<Map>> =
+            std::sync::LazyLock::new(|| Arc::new(Map::new()));
+        Value {
+            inner: ValueInner::Map((*EMPTY_MAP).clone()),
         }
     }
 
@@ -655,10 +723,12 @@ impl Value {
         }
     }
 
-    /// Returns the Value at the given path, or Undefined if there's nothing there.
-    pub fn get_from_path(&self, path: &str) -> Value {
-        if matches!(&self.inner, ValueInner::Undefined | ValueInner::None) {
-            return self.clone();
+    /// Returns a reference to the Value at the given path or None if there's nothing there
+    pub fn get_from_path<'s>(&'s self, path: &'s str) -> Option<&'s Value> {
+        match &self.inner {
+            ValueInner::Undefined => return None,
+            ValueInner::None => return Some(self),
+            _ => {}
         }
 
         let mut current = self;
@@ -668,37 +738,21 @@ impl Value {
                 Ok(idx) => match &current.inner {
                     ValueInner::Array(arr) => match arr.get(idx) {
                         Some(v) => current = v,
-                        None => {
-                            return Value {
-                                inner: ValueInner::Undefined,
-                            };
-                        }
+                        None => return None,
                     },
-                    _ => {
-                        return Value {
-                            inner: ValueInner::Undefined,
-                        };
-                    }
+                    _ => return None,
                 },
                 Err(_) => match &current.inner {
                     ValueInner::Map(map) => match map.get(&Key::Str(elem)) {
                         Some(v) => current = v,
-                        None => {
-                            return Value {
-                                inner: ValueInner::Undefined,
-                            };
-                        }
+                        None => return None,
                     },
-                    _ => {
-                        return Value {
-                            inner: ValueInner::Undefined,
-                        };
-                    }
+                    _ => return None,
                 },
             }
         }
 
-        current.clone()
+        Some(current)
     }
 
     /// Returns the truthiness of a value, eg not empty map/arrays/string and numbers different
@@ -783,7 +837,7 @@ impl Value {
             ValueInner::I64(v) => Key::I64(*v),
             ValueInner::U128(v) => Key::U128(**v),
             ValueInner::I128(v) => Key::I128(**v),
-            ValueInner::String(v) => Key::String(Arc::from(v.as_str())),
+            ValueInner::String(v) => Key::String(v.to_arc_str()),
             _ => return Err(Error::message("Not a valid key type".to_string())),
         };
         Ok(key)

@@ -1,0 +1,6 @@
+---
+source: plf/src/snapshot_tests/rendering.rs
+expression: "&normalized_out"
+input_file: plf/src/snapshot_tests/rendering_inputs/success/set_shadows_loop_var.txt
+---
+10-99,20-99,

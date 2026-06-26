@@ -1,11 +1,13 @@
 use crate::errors::{Error, TeraResult};
 use crate::value::Value;
+use std::cmp::Ordering;
 use std::fmt;
 use std::fmt::Formatter;
 
 /// Simpler representation of numbers so operations are simpler to handle
 /// Also can be used for custom filters/tests/fn when you want to ensure you get a number
 #[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
 pub enum Number {
     /// Integers are stored in i128, which means we can't use numbers from u128 above i128::MAX
     /// for math, which is probably ok for a template engine.
@@ -20,6 +22,27 @@ impl fmt::Display for Number {
             Number::Integer(v) => write!(f, "{v}"),
             Number::Float(v) => write!(f, "{v}"),
         }
+    }
+}
+
+impl From<Number> for Value {
+    fn from(n: Number) -> Self {
+        match n {
+            Number::Integer(i) => Value::from(i),
+            Number::Float(f) => Value::from(f),
+        }
+    }
+}
+
+impl PartialEq for Number {
+    fn eq(&self, other: &Self) -> bool {
+        Value::from(*self) == Value::from(*other)
+    }
+}
+
+impl PartialOrd for Number {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Value::from(*self).partial_cmp(&Value::from(*other))
     }
 }
 

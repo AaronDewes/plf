@@ -33,18 +33,22 @@ mod private {
     impl Sealed for isize {}
     impl Sealed for String {}
     impl Sealed for &str {}
+    impl Sealed for &[Value] {}
     impl<'a> Sealed for Cow<'a, str> {}
     impl Sealed for Value {}
     impl Sealed for &Value {}
     impl Sealed for Number {}
     impl Sealed for Map {}
+    impl Sealed for &Map {}
     impl<T: Sealed> Sealed for Vec<T> {}
 }
 
-#[doc(hidden)]
+/// Converts a template Value into a type that can be used in Rust code
 pub trait ArgFromValue<'k>: private::Sealed {
+    #[allow(missing_docs)]
     type Output;
 
+    #[allow(missing_docs)]
     fn from_value(value: &'k Value) -> TeraResult<Self::Output>;
 }
 
@@ -77,16 +81,47 @@ macro_rules! impl_for_literal {
         }
     }
 }
+
+fn int_from_value<T>(value: &Value, target_type: &'static str) -> TeraResult<T>
+where
+    T: TryFrom<i64> + TryFrom<i128> + TryFrom<u64> + TryFrom<u128>,
+{
+    let res = match &value.inner {
+        ValueInner::I64(v) => T::try_from(*v).ok(),
+        ValueInner::I128(v) => T::try_from(**v).ok(),
+        ValueInner::U64(v) => T::try_from(*v).ok(),
+        ValueInner::U128(v) => T::try_from(**v).ok(),
+        ValueInner::F64(v) if v.trunc() == *v => {
+            // We try to convert to a i128 only if it fits
+            if *v >= i128::MIN as f64 && *v < i128::MAX as f64 {
+                T::try_from(*v as i128).ok()
+            } else {
+                None
+            }
+        }
+        _ => return Err(Error::invalid_arg_type(target_type, value.name())),
+    };
+    res.ok_or_else(|| Error::out_of_range_arg(value, target_type))
+}
+
 macro_rules! impl_for_int {
     ($ty:ident) => {
-        impl_for_literal!($ty, {
-            ValueInner::I64(v) => *v,
-            ValueInner::I128(v) => **v,
-            ValueInner::U64(v) => *v,
-            ValueInner::U128(v) => **v,
-            ValueInner::F64(v) if (*v == *v as i64 as f64) => *v as i64,
-        });
-    }
+        impl TryFrom<Value> for $ty {
+            type Error = Error;
+
+            fn try_from(value: Value) -> Result<Self, Self::Error> {
+                int_from_value(&value, stringify!($ty))
+            }
+        }
+
+        impl<'k> ArgFromValue<'k> for $ty {
+            type Output = Self;
+
+            fn from_value(value: &Value) -> Result<Self, Error> {
+                int_from_value(value, stringify!($ty))
+            }
+        }
+    };
 }
 impl_for_int!(u8);
 impl_for_int!(u16);
@@ -105,14 +140,38 @@ impl_for_literal!(bool, {
     ValueInner::Bool(b) => *b,
 });
 
-// TODO: test when value doesn't fit in f32
-impl_for_literal!(f32, {
-    ValueInner::I64(b) => *b as f32,
-    ValueInner::I128(b) => **b as f32,
-    ValueInner::U64(b) => *b as f32,
-    ValueInner::U128(b) => **b as f32,
-    ValueInner::F64(b) => *b as f32,
-});
+fn f32_from_value(value: &Value) -> TeraResult<f32> {
+    let (as_f32, input_finite) = match &value.inner {
+        ValueInner::I64(v) => (*v as f32, true),
+        ValueInner::I128(v) => (**v as f32, true),
+        ValueInner::U64(v) => (*v as f32, true),
+        ValueInner::U128(v) => (**v as f32, true),
+        ValueInner::F64(v) => (*v as f32, v.is_finite()),
+        _ => return Err(Error::invalid_arg_type("f32", value.name())),
+    };
+
+    if as_f32.is_finite() || !input_finite {
+        Ok(as_f32)
+    } else {
+        Err(Error::out_of_range_arg(value, "f32"))
+    }
+}
+
+impl TryFrom<Value> for f32 {
+    type Error = Error;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        f32_from_value(&value)
+    }
+}
+
+impl<'k> ArgFromValue<'k> for f32 {
+    type Output = Self;
+
+    fn from_value(value: &Value) -> Result<Self, Error> {
+        f32_from_value(value)
+    }
+}
 impl_for_literal!(f64, {
     ValueInner::I64(b) => *b as f64,
     ValueInner::I128(b) => **b as f64,
@@ -193,6 +252,16 @@ impl<'k> ArgFromValue<'k> for Map {
     }
 }
 
+impl<'k> ArgFromValue<'k> for &Map {
+    type Output = &'k Map;
+
+    fn from_value(value: &'k Value) -> TeraResult<Self::Output> {
+        value
+            .as_map()
+            .ok_or_else(|| Error::invalid_arg_type("Map", value.name()))
+    }
+}
+
 impl<'k, T: ArgFromValue<'k, Output = T>> ArgFromValue<'k> for Vec<T> {
     type Output = Vec<T>;
 
@@ -206,6 +275,17 @@ impl<'k, T: ArgFromValue<'k, Output = T>> ArgFromValue<'k> for Vec<T> {
                 Ok(res)
             }
             _ => Err(Error::invalid_arg_type("Vec<Value>", value.name())),
+        }
+    }
+}
+
+impl<'k> ArgFromValue<'k> for &[Value] {
+    type Output = &'k [Value];
+
+    fn from_value(value: &'k Value) -> TeraResult<Self::Output> {
+        match &value.inner {
+            ValueInner::Array(arr) => Ok(arr.as_slice()),
+            _ => Err(Error::invalid_arg_type("&[Value]", value.name())),
         }
     }
 }
@@ -290,5 +370,25 @@ mod tests {
         let data: Data = kwargs.deserialize().unwrap();
         assert_eq!(data.num, 1.1);
         assert_eq!(data.hello, "world");
+    }
+
+    #[test]
+    fn int_out_of_range_reports_range_not_type() {
+        let kwargs = Kwargs::from([("n", Value::from(300))]);
+        let err = kwargs.get::<u8>("n").unwrap_err();
+        assert_eq!(err.to_string(), "Value `300` is out of range for `u8`");
+
+        let kwargs = Kwargs::from([("n", Value::from(-1))]);
+        let err = kwargs.get::<usize>("n").unwrap_err();
+        assert_eq!(err.to_string(), "Value `-1` is out of range for `usize`");
+
+        let kwargs = Kwargs::from([("n", Value::from(1e40_f64))]);
+        assert!(
+            kwargs
+                .get::<i128>("n")
+                .unwrap_err()
+                .to_string()
+                .contains("out of range")
+        );
     }
 }

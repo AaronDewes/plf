@@ -1,5 +1,5 @@
 ---
-source: tera/tests/basic.rs
+source: plf/tests/basic.rs
 expression: out
 ---
 <!DOCTYPE html>

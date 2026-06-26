@@ -1,0 +1,6 @@
+---
+source: plf/src/snapshot_tests/rendering.rs
+expression: "&err"
+input_file: plf/src/snapshot_tests/rendering_inputs/errors/components/infinite-recursion.txt
+---
+Maximum render recursion depth for components exceeded.

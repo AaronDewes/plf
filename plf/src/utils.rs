@@ -47,12 +47,18 @@ impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
     }
 }
 
+/// The position of a node in the template source
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct Span {
+    /// Line the span starts on, 1-based
     pub start_line: usize,
+    /// Column the span starts on, 0-based
     pub start_col: usize,
+    /// Line the span ends on, 1-based
     pub end_line: usize,
+    /// Column the span ends on, 0-based
     pub end_col: usize,
+    /// Byte range of the span in the template source
     pub range: Range<usize>,
 }
 
@@ -76,7 +82,7 @@ impl fmt::Display for Span {
     }
 }
 impl Span {
-    pub fn expand(&mut self, other: &Span) {
+    pub(crate) fn expand(&mut self, other: &Span) {
         self.end_line = other.end_line;
         self.end_col = other.end_col;
         self.range = self.range.start..other.range.end;
@@ -99,19 +105,17 @@ impl Span {
 /// ' --> &#39;
 /// ```
 #[inline]
-pub fn escape_html(input: &[u8], buf: &mut dyn std::io::Write) -> std::io::Result<()> {
+pub fn escape_html(input: &str, buf: &mut dyn std::io::Write) -> std::io::Result<()> {
     #[cfg(feature = "fast_escape")]
     {
         use pulldown_cmark_escape::IoWriter;
-        // SAFETY: input comes from Value::format() which only produces valid UTF-8
-        let s = unsafe { std::str::from_utf8_unchecked(input) };
-        pulldown_cmark_escape::escape_html(IoWriter(buf), s)?;
+        pulldown_cmark_escape::escape_html(IoWriter(buf), input)?;
         Ok(())
     }
 
     #[cfg(not(feature = "fast_escape"))]
     {
-        for c in input {
+        for c in input.as_bytes() {
             match c {
                 b'&' => buf.write_all(b"&amp;")?,
                 b'<' => buf.write_all(b"&lt;")?,

@@ -51,6 +51,7 @@ impl Context {
     }
 
     /// Converts the `val` parameter to `Value` and insert it into the context.
+    /// This can panic if the value cannot be serialised.
     ///
     /// ```rust
     /// # use plf::Context;
@@ -101,22 +102,30 @@ impl Context {
 
 /// Creates a context from key value pairs
 ///
+/// A bare key captures the local variable of the same name, like in struct initializers.
+///
 /// Example:
 /// ```rust
+/// use plf::context;
+///
+/// let age = 24;
 /// let ctx = context! {
 ///     name => "Brian",
-///     age => &24,
+///     age,
 /// };
 /// ```
 /// Expands to:
 /// ```
+/// use plf::Context;
+///
+/// let age = 24;
 /// let ctx = {
 ///     let mut context = Context::new();
 ///     context.insert("name", "Brian");
-///     context.insert("age", &24);
+///     context.insert("age", &age);
 ///     context
 /// };
-///
+/// ```
 #[macro_export]
 macro_rules! context {
     (
@@ -127,10 +136,23 @@ macro_rules! context {
         {
             let mut context = $crate::Context::new();
             $(
-                context.insert(stringify!($key), $($value)?);
+                $crate::__context_insert!(context, $key $(=> $value)?);
             )*
             context
         }
+    };
+}
+
+/// Implementation detail of [`context!`]: inserts one entry, capturing the local
+/// variable when no value is given.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __context_insert {
+    ($context:ident, $key:ident) => {
+        $context.insert(stringify!($key), &$key)
+    };
+    ($context:ident, $key:ident => $value:expr) => {
+        $context.insert(stringify!($key), $value)
     };
 }
 
@@ -143,6 +165,22 @@ mod tests {
         let left = context! {
             foo => "Bar",
             con => &69
+        };
+
+        let mut right = Context::new();
+        right.insert("foo", "Bar");
+        right.insert("con", &69);
+
+        assert_eq!(left, right);
+    }
+
+    #[test]
+    fn context_macro_can_capture_local_name() {
+        let foo = "Bar";
+        let con = 69;
+        let left = context! {
+            foo,
+            con => &con,
         };
 
         let mut right = Context::new();

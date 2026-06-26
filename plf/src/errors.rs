@@ -60,24 +60,23 @@ impl ReportError {
         });
     }
 
-    pub fn generate_report(&self) -> String {
+    pub(crate) fn generate_report(&self) -> String {
         generate_report(self)
     }
 
+    /// The error message, without the source context.
     pub fn message(&self) -> &str {
         &self.message
     }
 
+    /// Where in the template source the error occurred.
     pub fn span(&self) -> &Span {
         &self.span
     }
 
+    /// The name of the template the error occurred in.
     pub fn filename(&self) -> &str {
         &self.filename
-    }
-
-    pub fn source(&self) -> &str {
-        &self.source
     }
 
     pub(crate) fn unexpected_end_of_input(span: &Span) -> Self {
@@ -117,22 +116,6 @@ pub enum ErrorKind {
         /// The missing template
         parent: String,
     },
-    /// A template is calling a macro namespace that is not loaded
-    NamespaceNotLoaded {
-        /// Name of the template with the issue
-        tpl: String,
-        /// The namespace causing problems
-        namespace: String,
-    },
-    /// The template is calling a macro which isn't found in the namespace
-    MacroNotFound {
-        /// Name of the template with the issue
-        tpl: String,
-        /// The namespace used
-        namespace: String,
-        /// The name of the macro that cannot be found
-        name: String,
-    },
     /// A template was missing
     TemplateNotFound(String),
     /// A component was missing
@@ -149,6 +132,13 @@ pub enum ErrorKind {
     MissingArgument {
         #[allow(missing_docs)]
         arg_name: String,
+    },
+    /// A numeric argument had the right type but did not fit in the target type
+    OutOfRangeArgument {
+        #[allow(missing_docs)]
+        value: String,
+        #[allow(missing_docs)]
+        target_type: String,
     },
     /// An IO error occurred
     Io(std::io::ErrorKind),
@@ -184,18 +174,6 @@ impl fmt::Display for ErrorKind {
             ),
             ErrorKind::TemplateNotFound(name) => write!(f, "Template '{name}' not found"),
             ErrorKind::ComponentNotFound(name) => write!(f, "Component '{name}' not found"),
-            ErrorKind::NamespaceNotLoaded { tpl, namespace } => write!(
-                f,
-                "Template '{tpl}' is trying to use namespace `{namespace}` which is not loaded",
-            ),
-            ErrorKind::MacroNotFound {
-                tpl,
-                namespace,
-                name,
-            } => write!(
-                f,
-                "Template '{tpl}' is using macro `{namespace}::{name}` which is not found in the namespace",
-            ),
             ErrorKind::InvalidArgument {
                 expected_type,
                 actual_type,
@@ -205,6 +183,9 @@ impl fmt::Display for ErrorKind {
             ),
             ErrorKind::MissingArgument { arg_name } => {
                 write!(f, "Missing keyword argument `{arg_name}`")
+            }
+            ErrorKind::OutOfRangeArgument { value, target_type } => {
+                write!(f, "Value `{value}` is out of range for `{target_type}`")
             }
             ErrorKind::Io(io_error) => {
                 write!(
@@ -338,6 +319,16 @@ impl Error {
             kind: ErrorKind::InvalidArgument {
                 expected_type: expected_type.to_string(),
                 actual_type: actual_type.to_string(),
+            },
+            source: None,
+        }
+    }
+
+    pub(crate) fn out_of_range_arg(value: impl ToString, target_type: impl ToString) -> Self {
+        Self {
+            kind: ErrorKind::OutOfRangeArgument {
+                value: value.to_string(),
+                target_type: target_type.to_string(),
             },
             source: None,
         }

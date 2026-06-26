@@ -1,6 +1,9 @@
 use plf::value::ValueKind;
 use plf::{Error, Kwargs, State, TeraResult, Value};
 
+/// Putting a huge number for padding could trigger a huge allocation.
+const MAX_SPEC_NUM: usize = 100;
+
 /// Formats a value using Rust's std::fmt format specifiers.
 ///
 /// Supports width, alignment, precision, sign, and zero-padding.
@@ -15,6 +18,18 @@ use plf::{Error, Kwargs, State, TeraResult, Value};
 /// ```
 pub fn format(val: Value, kwargs: Kwargs, _: &State) -> TeraResult<String> {
     let spec = kwargs.must_get::<&str>("spec")?;
+    if spec.contains('$') {
+        return Err(Error::message(format!(
+            "format spec `{spec}` cannot reference arguments with `$`"
+        )));
+    }
+    for digits in spec.split(|c: char| !c.is_ascii_digit()) {
+        if !digits.is_empty() && !digits.parse::<usize>().is_ok_and(|n| n <= MAX_SPEC_NUM) {
+            return Err(Error::message(format!(
+                "format spec `{spec}` contains a number bigger than the maximum allowed ({MAX_SPEC_NUM})"
+            )));
+        }
+    }
     let fmt_str = format!("{{:{}}}", spec);
 
     match val.kind() {
@@ -97,5 +112,30 @@ mod tests {
     fn test_combined() {
         assert_eq!(render("{{ 42 | format(spec='>+10') }}"), "       +42");
         assert_eq!(render("{{ 3.14159 | format(spec='>10.2') }}"), "      3.14");
+    }
+
+    #[test]
+    fn test_huge_width_rejected() {
+        let mut tera = Tera::default();
+        tera.register_filter("format", format);
+        for spec in ["4000000000", ".4000000000", ">99999999999999999999"] {
+            tera.add_raw_template("test", &format!("{{{{ 1 | format(spec='{spec}') }}}}"))
+                .unwrap();
+            let err = tera.render("test", &Context::new()).unwrap_err();
+            assert!(err.to_string().contains("maximum allowed"), "{err}");
+        }
+    }
+
+    #[test]
+    fn test_dollar_reference_rejected() {
+        let mut tera = Tera::default();
+        tera.register_filter("format", format);
+        // `0$` would use the value (50000) as the width
+        for spec in ["0$", "0$.2", ">0$"] {
+            tera.add_raw_template("test", &format!("{{{{ 50000 | format(spec='{spec}') }}}}"))
+                .unwrap();
+            let err = tera.render("test", &Context::new()).unwrap_err();
+            assert!(err.to_string().contains('$'), "{err}");
+        }
     }
 }

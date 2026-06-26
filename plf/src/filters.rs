@@ -12,7 +12,7 @@ use crate::vm::state::State;
 use crate::{HashMap, Value};
 
 /// The filter function type definition
-pub trait Filter<Arg, Res>: Sync + Send + 'static {
+pub trait Filter<Arg, Res: FunctionResult>: Sync + Send + 'static {
     /// The filter function type definition
     fn call(&self, value: Arg, kwargs: Kwargs, state: &State) -> Res;
 
@@ -113,7 +113,7 @@ pub(crate) fn wordcount(val: &str, _: Kwargs, _: &State) -> usize {
 
 pub(crate) fn escape(val: &str, _: Kwargs, _: &State) -> String {
     let mut buf = Vec::with_capacity(val.len());
-    escape_html(val.as_bytes(), &mut buf).unwrap();
+    escape_html(val, &mut buf).unwrap();
     // SAFETY: escape_html only produces valid UTF-8
     unsafe { String::from_utf8_unchecked(buf) }
 }
@@ -452,148 +452,124 @@ pub(crate) fn round(val: f64, kwargs: Kwargs, _: &State) -> TeraResult<Value> {
 
 /// Returns the first element of an array. None if the array is empty
 /// and errors if the value is not an array
-pub(crate) fn first(val: Vec<Value>, _: Kwargs, _: &State) -> TeraResult<Value> {
+pub(crate) fn first(val: &[Value], _: Kwargs, _: &State) -> TeraResult<Value> {
     Ok(val.first().cloned().unwrap_or(Value::none()))
 }
 
 /// Returns the last element of an array. None if the array is empty
 /// and errors if the value is not an array
-pub(crate) fn last(val: Vec<Value>, _: Kwargs, _: &State) -> TeraResult<Value> {
+pub(crate) fn last(val: &[Value], _: Kwargs, _: &State) -> TeraResult<Value> {
     Ok(val.last().cloned().unwrap_or(Value::none()))
 }
 
 /// Returns the nth element of an array. None if there isn't an element at that index.
 /// and errors if the value is not an array
-pub(crate) fn nth(val: Vec<Value>, kwargs: Kwargs, _: &State) -> TeraResult<Value> {
+pub(crate) fn nth(val: &[Value], kwargs: Kwargs, _: &State) -> TeraResult<Value> {
     let n = kwargs.must_get::<usize>("n")?;
-    Ok(val.into_iter().nth(n).unwrap_or(Value::none()))
+    Ok(val.get(n).cloned().unwrap_or(Value::none()))
 }
 
 /// Joins the elements
-pub(crate) fn join(val: Vec<Value>, kwargs: Kwargs, _: &State) -> TeraResult<String> {
+pub(crate) fn join(val: &[Value], kwargs: Kwargs, _: &State) -> TeraResult<String> {
     let sep = kwargs.get::<&str>("sep")?.unwrap_or("");
     Ok(val
-        .into_iter()
+        .iter()
         .map(|x| format!("{x}"))
         .collect::<Vec<_>>()
         .join(sep))
 }
 
+/// We want to check if the items can actually be sorted, eg be comparable. We allow null
+/// to stay though but eg a number and a string in the same vec will raise an error.
+fn ensure_comparable<'a>(keys: impl Iterator<Item = &'a Value>) -> TeraResult<()> {
+    let mut prev: Option<&Value> = None;
+    for key in keys {
+        if let Some(prev) = prev {
+            let skippable = prev.is_none() || key.is_none();
+            if !skippable && prev.partial_cmp(key).is_none() {
+                return Err(Error::message(format!(
+                    "Cannot sort: `{}` and `{}` are not comparable",
+                    prev.name(),
+                    key.name()
+                )));
+            }
+        }
+        prev = Some(key);
+    }
+
+    Ok(())
+}
+
 /// Sorts an array. If `attribute` is provided, sorts by that attribute.
-pub(crate) fn sort(mut val: Vec<Value>, kwargs: Kwargs, _: &State) -> TeraResult<Vec<Value>> {
+pub(crate) fn sort(val: &[Value], kwargs: Kwargs, _: &State) -> TeraResult<Vec<Value>> {
     if val.is_empty() {
-        return Ok(val);
+        return Ok(Vec::new());
     }
 
     if let Some(attribute) = kwargs.get::<&str>("attribute")? {
-        val.sort_by(|a, b| {
-            let key_a = a.get_from_path(attribute);
-            let key_b = b.get_from_path(attribute);
-            key_a.cmp(&key_b)
-        });
+        let mut decorated = Vec::with_capacity(val.len());
+        for v in val {
+            let key = match v.get_from_path(attribute) {
+                Some(key) => key,
+                None => {
+                    return Err(Error::message(format!(
+                        "Value {v} does not have an attribute after following path: {attribute}"
+                    )));
+                }
+            };
+            decorated.push((key, v));
+        }
+        // We sort with Ord::cmp because we have our own custom impl that the default sorting will
+        // disagree with
+        #[allow(clippy::unnecessary_sort_by)]
+        decorated.sort_by(|(a, _), (b, _)| a.cmp(b));
+        ensure_comparable(decorated.iter().map(|(k, _)| *k))?;
+        Ok(decorated.into_iter().map(|(_, v)| v.clone()).collect())
     } else {
-        val.sort();
+        let mut out = val.to_vec();
+        // We sort with Ord::cmp because we have our own custom impl that the default sorting will
+        // disagree with
+        #[allow(clippy::unnecessary_sort_by)]
+        out.sort_by(|a, b| a.cmp(b));
+        ensure_comparable(out.iter())?;
+        Ok(out)
     }
-
-    Ok(val)
 }
 
-pub(crate) fn unique(val: Vec<Value>, _: Kwargs, _: &State) -> Vec<Value> {
+pub(crate) fn unique(val: &[Value], _: Kwargs, _: &State) -> Vec<Value> {
     if val.is_empty() {
-        return val;
+        return Vec::new();
     }
 
     let mut seen = BTreeSet::new();
     let mut res = Vec::with_capacity(val.len());
 
     for v in val {
-        if !seen.contains(&v) {
+        if !seen.contains(v) {
             seen.insert(v.clone());
-            res.push(v);
+            res.push(v.clone());
         }
     }
 
     res
 }
 
-/// Map retrieves an attribute from a list of objects and/or applies a filter to each element.
-/// - `attribute`: specifies what attribute to retrieve from each element
-/// - `filter`: specifies a filter to apply to each element (or to the extracted attribute)
-/// - `args`: optional map of arguments to pass to the filter
-///
-/// At least one of `attribute` or `filter` must be provided.
-/// If both are provided, the attribute is extracted first, then the filter is applied.
-pub(crate) fn map(val: Vec<Value>, kwargs: Kwargs, state: &State) -> TeraResult<Vec<Value>> {
-    if val.is_empty() {
-        return Ok(val);
-    }
-
-    let filter_name = kwargs.get::<&str>("filter")?;
-    let attribute = kwargs.get::<&str>("attribute")?;
-
-    // Must have at least one of filter or attribute
-    if filter_name.is_none() && attribute.is_none() {
-        return Err(Error::message(
-            "map filter requires either `filter` or `attribute` argument",
-        ));
-    }
-
-    // Prepare filter kwargs if filter is specified
-    let filter_kwargs = if filter_name.is_some() {
-        let args_map = kwargs
-            .get::<Value>("args")?
-            .and_then(|v| v.into_map())
-            .map(Arc::new)
-            .unwrap_or_else(|| Arc::new(Map::new()));
-        Some(Kwargs::new(args_map))
-    } else {
-        None
-    };
-
-    let mut res = Vec::with_capacity(val.len());
-    for v in val {
-        // Step 1: Extract attribute if specified
-        let extracted = if let Some(attr) = attribute {
-            match v.get_from_path(attr) {
-                x if x.is_undefined() => {
-                    return Err(Error::message(format!(
-                        "Value {v} does not have an attribute at path: {attr}"
-                    )));
-                }
-                x => x,
-            }
-        } else {
-            v
-        };
-
-        // Step 2: Apply filter if specified
-        let final_val = if let (Some(name), Some(f_kwargs)) = (filter_name, &filter_kwargs) {
-            state.call_filter(name, &extracted, f_kwargs.clone())?
-        } else {
-            extracted
-        };
-
-        res.push(final_val);
-    }
-    Ok(res)
+pub(crate) fn values(val: &Map, _: Kwargs, _: &State) -> TeraResult<Vec<Value>> {
+    Ok(val.values().cloned().collect())
 }
 
-pub(crate) fn values(val: Map, _: Kwargs, _: &State) -> TeraResult<Vec<Value>> {
-    Ok(val.into_values().collect())
+pub(crate) fn keys(val: &Map, _: Kwargs, _: &State) -> TeraResult<Vec<Value>> {
+    Ok(val.keys().map(|k| k.clone().into()).collect())
 }
 
-pub(crate) fn keys(val: Map, _: Kwargs, _: &State) -> TeraResult<Vec<Value>> {
-    Ok(val.into_keys().map(|k| k.into()).collect())
-}
-
-pub(crate) fn pairs(val: Map, _: Kwargs, _: &State) -> TeraResult<Vec<Value>> {
+pub(crate) fn pairs(val: &Map, _: Kwargs, _: &State) -> TeraResult<Vec<Value>> {
     Ok(val
-        .into_iter()
-        .map(|(k, v)| Value::from(vec![Value::from(k), v]))
+        .iter()
+        .map(|(k, v)| Value::from(vec![Value::from(k.clone()), v.clone()]))
         .collect())
 }
 
-pub(crate) fn get(val: Map, kwargs: Kwargs, _: &State) -> TeraResult<Value> {
+pub(crate) fn get(val: &Map, kwargs: Kwargs, _: &State) -> TeraResult<Value> {
     let key = kwargs.must_get::<&str>("key")?;
     let default = kwargs.get::<Value>("default")?;
     if let Some(val_found) = val.get(&Key::Str(key)) {
@@ -607,33 +583,7 @@ pub(crate) fn get(val: Map, kwargs: Kwargs, _: &State) -> TeraResult<Value> {
     }
 }
 
-pub(crate) fn filter(val: Vec<Value>, kwargs: Kwargs, _: &State) -> TeraResult<Vec<Value>> {
-    if val.is_empty() {
-        return Ok(val);
-    }
-    let attribute = kwargs.must_get::<&str>("attribute")?;
-    let value = kwargs.get::<Value>("value")?.unwrap_or(Value::none());
-    let mut res = Vec::with_capacity(val.len());
-
-    for v in val {
-        match v.get_from_path(attribute) {
-            x if x.is_undefined() => {
-                return Err(Error::message(format!(
-                    "Value {v} does not have an attribute after following path: {attribute}"
-                )));
-            }
-            x => {
-                if x == value {
-                    res.push(v)
-                }
-            }
-        }
-    }
-
-    Ok(res)
-}
-
-pub(crate) fn group_by(val: Vec<Value>, kwargs: Kwargs, _: &State) -> TeraResult<Map> {
+pub(crate) fn group_by(val: &[Value], kwargs: Kwargs, _: &State) -> TeraResult<Map> {
     if val.is_empty() {
         return Ok(Map::new());
     }
@@ -642,18 +592,18 @@ pub(crate) fn group_by(val: Vec<Value>, kwargs: Kwargs, _: &State) -> TeraResult
     let mut grouped: HashMap<Key, Vec<Value>> = HashMap::new();
     for v in val {
         match v.get_from_path(attribute) {
-            x if x.is_undefined() => {
+            None => {
                 return Err(Error::message(format!(
                     "Value {v} does not have an attribute after following path: {attribute}"
                 )));
             }
-            x if x.is_none() => (),
-            x => {
+            Some(x) if x.is_none() => (),
+            Some(x) => {
                 let key = x.as_key()?;
                 if let Some(arr) = grouped.get_mut(&key) {
-                    arr.push(v);
+                    arr.push(v.clone());
                 } else {
-                    grouped.insert(key, vec![v]);
+                    grouped.insert(key, vec![v.clone()]);
                 }
             }
         }

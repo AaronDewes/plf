@@ -38,7 +38,6 @@ pub(crate) struct Compiler {
     pub(crate) top_level_variables: HashSet<String>,
     /// Represents variables set by a loop or by set
     pub(crate) temp_variables: Vec<HashSet<String>>,
-    pub(crate) raw_content_num_bytes: usize,
 }
 
 impl Compiler {
@@ -56,7 +55,6 @@ impl Compiler {
             top_level_variables: HashSet::default(),
             temp_variables: vec![HashSet::new()],
             block_depth: 0,
-            raw_content_num_bytes: 0,
         }
     }
 
@@ -254,6 +252,54 @@ impl Compiler {
                 self.compile_expr(ternary.false_expr);
                 self.end_branch(self.chunk.len());
             }
+            Expression::ListComprehension(e) => {
+                let (list_comp, span) = e.into_parts();
+
+                self.chunk
+                    .add(Instruction::BuildList(0), Some(span.clone()));
+                self.compile_expr(list_comp.target);
+                self.chunk.add(
+                    Instruction::StartIterateComprehension(list_comp.key.is_some()),
+                    None,
+                );
+                let mut loop_vars = HashSet::new();
+                loop_vars.insert(list_comp.value.clone());
+                self.chunk
+                    .add(Instruction::StoreLocal(list_comp.value), None);
+                if let Some(k) = list_comp.key {
+                    loop_vars.insert(k.clone());
+                    self.chunk.add(Instruction::StoreLocal(k), None);
+                }
+                self.temp_variables.push(loop_vars);
+
+                let start_idx = self.chunk.add(Instruction::Iterate(0), None) as usize;
+                let cond_skip_idx = if let Some(c) = list_comp.condition {
+                    self.compile_expr(c);
+                    Some(self.chunk.add(Instruction::PopJumpIfFalse(0), None) as usize)
+                } else {
+                    None
+                };
+                self.compile_expr(list_comp.expr);
+                self.chunk.add(Instruction::AppendToList, None);
+                if let Some(idx) = cond_skip_idx {
+                    let jump_back_target = self.chunk.len();
+                    if let Some((Instruction::PopJumpIfFalse(t), _)) = self.chunk.get_mut(idx) {
+                        *t = jump_back_target;
+                    } else {
+                        unreachable!();
+                    }
+                }
+                self.chunk.add(Instruction::Jump(start_idx), None);
+                let loop_end = self.chunk.len();
+                if let Some((Instruction::Iterate(t), _)) = self.chunk.get_mut(start_idx) {
+                    *t = loop_end;
+                } else {
+                    unreachable!();
+                }
+
+                self.chunk.add(Instruction::PopLoop, None);
+                self.temp_variables.pop();
+            }
             Expression::ComponentCall(e) => {
                 let (component_call, span) = e.into_parts();
 
@@ -268,7 +314,7 @@ impl Compiler {
                     for node in component_call.body {
                         self.compile_node(node);
                     }
-                    self.chunk.add(Instruction::EndCapture, None);
+                    self.chunk.add(Instruction::EndCapture, Some(span.clone()));
                 }
 
                 self.compile_map_entries(component_call.kwargs, None);
@@ -417,7 +463,6 @@ impl Compiler {
     pub fn compile_node(&mut self, node: Node) {
         match node {
             Node::Content(text) => {
-                self.raw_content_num_bytes += text.len();
                 self.chunk.add(Instruction::WriteText(text), None);
             }
             Node::Expression(expr) => {
@@ -444,7 +489,9 @@ impl Compiler {
                 for node in b.body {
                     self.compile_node(node);
                 }
-                self.chunk.add(Instruction::EndCapture, None);
+                // We can only have an error on a filter so point to the first one
+                let capture_span = b.filters.first().map(|f| f.span().clone());
+                self.chunk.add(Instruction::EndCapture, capture_span);
                 for expr in b.filters {
                     if let Expression::Filter(f) = expr {
                         let (filter, span) = f.into_parts();
@@ -452,8 +499,9 @@ impl Compiler {
                         self.filter_calls
                             .entry(filter.name.clone())
                             .or_default()
-                            .push(span);
-                        self.chunk.add(Instruction::ApplyFilter(filter.name), None);
+                            .push(span.clone());
+                        self.chunk
+                            .add(Instruction::ApplyFilter(filter.name), Some(span));
                     }
                 }
                 let scope = if b.global {
@@ -571,14 +619,16 @@ impl Compiler {
                 for node in f.body {
                     self.compile_node(node);
                 }
-                self.chunk.add(Instruction::EndCapture, None);
+                self.chunk
+                    .add(Instruction::EndCapture, Some(f.name.span().clone()));
                 self.compile_kwargs(f.kwargs);
                 let (filter_name, span) = f.name.into_parts();
                 self.filter_calls
                     .entry(filter_name.clone())
                     .or_default()
-                    .push(span);
-                self.chunk.add(Instruction::ApplyFilter(filter_name), None);
+                    .push(span.clone());
+                self.chunk
+                    .add(Instruction::ApplyFilter(filter_name), Some(span));
                 self.chunk.add(Instruction::WriteTop, None);
             }
         }
