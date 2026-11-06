@@ -108,7 +108,11 @@ impl Tera {
         let mut tera = Self {
             glob: None,
             templates: HashMap::new(),
-            autoescape_suffixes: vec![".html", ".htm", ".xml"],
+            autoescape_suffixes: vec![
+                Cow::Borrowed(".html"),
+                Cow::Borrowed(".htm"),
+                Cow::Borrowed(".xml"),
+            ],
             escape_fn: escape_html,
             global_context: Context::new(),
             filters: HashMap::new(),

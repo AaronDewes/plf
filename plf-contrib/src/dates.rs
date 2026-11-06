@@ -38,7 +38,7 @@ fn parse_to_zoned(val: &Value, tz: Option<TimeZone>) -> TeraResult<Zoned> {
             .map(|t| t.to_zoned(default_tz))
             .map_err(|e| plf::Error::message(format!("Invalid timestamp: {e}")))
     } else {
-        Err(tera::Error::message(format!(
+        Err(plf::Error::message(format!(
             "Invalid value: expected a string or integer, got {}",
             val.name()
         )))

@@ -43,7 +43,7 @@ fn get_or_create_regex(cache: &RwLock<HashMap<String, Regex>>, pattern: &str) ->
 
     let regex = match Regex::new(pattern) {
         Ok(regex) => regex,
-        Err(e) => return Err(tera::Error::message(format!("Invalid regex: {e}"))),
+        Err(e) => return Err(plf::Error::message(format!("Invalid regex: {e}"))),
     };
 
     cache.insert(String::from(pattern), regex.clone());

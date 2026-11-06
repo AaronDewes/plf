@@ -131,7 +131,7 @@ fn value_from_js_inner(
                 seen_objects.remove(&obj);
                 ValueInner::Array(Arc::new(arr))
             } else {
-                let mut map = crate::HashMap::new();
+                let mut map = crate::value::Map::new();
 
                 let keys = obj.own_property_keys(context)?;
 

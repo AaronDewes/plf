@@ -14,7 +14,7 @@ pub fn get_random(kwargs: Kwargs, _: &State) -> TeraResult<i64> {
     let end = kwargs.must_get::<i64>("end")?;
 
     if start >= end {
-        return Err(tera::Error::message(format!(
+        return Err(plf::Error::message(format!(
             "get_random: `start` ({start}) must be less than `end` ({end})."
         )));
     }
