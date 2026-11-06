@@ -1,8 +1,40 @@
 # Changelog
 
+## plf 0.3.0 (unreleased)
+
+### Breaking changes
+
+- `js` feature: upgraded `boa_engine` and `boa_runtime` from 0.21 to 0.22. `Tera::new_with_js` takes a
+  `boa_engine::Context` and `Tera::eval_js` returns `boa_engine::JsResult<boa_engine::JsValue>`, so callers must
+  build their context with Boa 0.22 as well (a Boa 0.21 context is a different type and no longer compiles).
+  Boa 0.22 uses ICU4X 2.3 (`icu_*` `~2.3`) instead of 2.0.
+- Synced with upstream Tera 2.0.0: `Value::as_vec()` was renamed to `Value::as_array()` and returns `&[Value]`
+  instead of `&Vec<Value>`.
+
+### Changes
+
+- Synced with upstream Tera 2.0.0, which adds `Value::bytes`, `Value::as_i64`, `Value::as_u64` and `From` impls for
+  `char`, `u16`, `i16`, `f32`, `()`, `Option<T>` and `&[u8]`.
+- `num-bigint` (now 0.5, matching Boa) and `num-traits` are only pulled in by the `js` feature.
+- Errors thrown by JS handlers (or rejected promises) now include the JS error message in the rendering error
+  instead of only "Error calling JS function".
+- Calling `registerPlfHandler` from inside a JS handler while a template renders now throws a JS error instead of
+  deadlocking.
+- Fixed the `js` feature not compiling (`autoescape_suffixes` type) and not compiling together with
+  `preserve_order`; fixed leftover `tera::` paths in `plf-contrib`.
+- Fixed the `registerPlfHandler` argument error messages (they referred to `definePlfHandler`).
+
+## plf 0.2.0
+
+- Fork of Tera 2 renamed to plf, with an optional `js` feature (Boa 0.21): `Tera::new_with_js`, `Tera::eval_js` and
+  the `registerPlfHandler(name, fn, isSafe?)` JS function. JS handlers receive the template kwargs as an object and
+  may return a promise, which is awaited.
+
+# Tera changelog (upstream)
+
 ## 2.0.0 (2026-06-26)
 
-see [migration guide](./MIGRATION.md) for all the changes.
+see [migration guide](https://github.com/Keats/tera/blob/master/MIGRATION.md) for all the changes.
 
 ## 1.21.1 (2025-10-30)
 

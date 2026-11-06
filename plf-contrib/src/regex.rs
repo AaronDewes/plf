@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
-use regex::Regex;
 use plf::{Filter, Kwargs, State, TeraResult, Test};
+use regex::Regex;
 
 static STRIPTAGS_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(<!--.*?-->|<[^>]*>)").unwrap());
@@ -93,9 +93,9 @@ impl Filter<&str, TeraResult<String>> for RegexReplace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use plf::Context;
     use plf::value::Map;
+    use std::sync::Arc;
 
     #[test]
     fn test_striptags() {

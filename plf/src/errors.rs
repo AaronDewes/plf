@@ -195,7 +195,10 @@ impl fmt::Display for ErrorKind {
                 )
             }
             ErrorKind::Timeout => {
-                write!(f, "A timeout occurred while waiting for a JS function to resolve.")
+                write!(
+                    f,
+                    "A timeout occurred while waiting for a JS function to resolve."
+                )
             }
             ErrorKind::Utf8Conversion => {
                 write!(f, "Invalid UTF-8 characters found while rendering.")

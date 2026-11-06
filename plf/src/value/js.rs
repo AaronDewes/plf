@@ -11,9 +11,9 @@ use num_traits::cast::ToPrimitive;
 use crate::Value;
 use crate::value::{Key, SmartString, ValueInner};
 
-impl Into<PropertyKey> for &Key<'_> {
-    fn into(self) -> PropertyKey {
-        match self {
+impl From<&Key<'_>> for PropertyKey {
+    fn from(key: &Key<'_>) -> Self {
+        match key {
             Key::String(s) => PropertyKey::String(js_string!(&**s)),
             Key::U64(u) => PropertyKey::String(js_string!(u.to_string())),
             Key::I64(i) => PropertyKey::String(js_string!(i.to_string())),
@@ -41,7 +41,7 @@ impl TryIntoJs for Value {
                 Ok(JsValue::from(js_string!(smart_string.as_str())))
             }
             ValueInner::Array(values) => {
-                let arr = JsArray::new(context);
+                let arr = JsArray::new(context)?;
                 for val in values.iter() {
                     let val = val.try_into_js(context)?;
                     arr.push(val, context)?;
@@ -79,7 +79,7 @@ fn value_from_js_inner(
         JsVariant::Undefined => ValueInner::Undefined,
         JsVariant::Boolean(b) => ValueInner::Bool(b),
         JsVariant::String(js_string) => ValueInner::String(SmartString::new(
-            &js_string.as_str().to_std_string_escaped(),
+            &js_string.to_std_string_escaped(),
             super::StringKind::Normal,
         )),
         JsVariant::Float64(f) => ValueInner::F64(f),
@@ -138,7 +138,7 @@ fn value_from_js_inner(
                 for key in keys {
                     let tera_key = match &key {
                         PropertyKey::String(s) => {
-                            Key::String(Arc::<str>::from(s.as_str().to_std_string_escaped()))
+                            Key::String(Arc::<str>::from(s.to_std_string_escaped()))
                         }
                         PropertyKey::Index(i) => Key::U64(u64::from(i.get())),
                         PropertyKey::Symbol(_) => {

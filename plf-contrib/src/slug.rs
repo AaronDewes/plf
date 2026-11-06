@@ -1,5 +1,5 @@
-use slug::slugify;
 use plf::{Kwargs, State};
+use slug::slugify;
 
 /// Slugify the given value.
 ///

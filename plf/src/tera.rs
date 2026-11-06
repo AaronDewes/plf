@@ -1,11 +1,15 @@
 use std::borrow::Cow;
+#[cfg(feature = "js")]
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashSet;
 use std::fmt;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 #[cfg(feature = "js")]
-use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::rc::Rc;
+#[cfg(feature = "js")]
+use std::sync::Mutex;
 
 #[cfg(feature = "js")]
 use boa_engine::{JsValue, NativeFunction, js_string, object::builtins::JsFunction};
@@ -83,7 +87,9 @@ pub struct Tera {
     pub(crate) filters: HashMap<Cow<'static, str>, StoredFilter>,
     pub(crate) tests: HashMap<Cow<'static, str>, StoredTest>,
     #[cfg(feature = "js")]
-    pub(crate) functions: Arc<RwLock<HashMap<Cow<'static, str>, StoredFunction>>>,
+    // Shared with the `registerPlfHandler` JS function, which adds functions to it.
+    // `boa_engine::Context` is neither `Send` nor `Sync`, so a `Tera` with JS support isn't either.
+    pub(crate) functions: Rc<RefCell<HashMap<Cow<'static, str>, StoredFunction>>>,
     #[cfg(not(feature = "js"))]
     pub(crate) functions: HashMap<Cow<'static, str>, StoredFunction>,
     pub(crate) components: HashMap<String, (ComponentDefinition, Chunk)>,
@@ -118,7 +124,7 @@ impl Tera {
             filters: HashMap::new(),
             tests: HashMap::new(),
             #[cfg(feature = "js")]
-            functions: Arc::new(RwLock::new(HashMap::new())),
+            functions: Rc::new(RefCell::new(HashMap::new())),
             components: HashMap::new(),
             delimiters: Delimiters::default(),
             fallback_prefixes: Vec::new(),
@@ -141,26 +147,30 @@ impl Tera {
                 unsafe {
                     NativeFunction::from_closure(move |_this, args, _ctx| {
                         let fn_name = args
-                            .get(0)
+                            .first()
                             .and_then(|v| v.as_string())
                             .ok_or_else(|| {
                                 boa_engine::JsNativeError::typ().with_message(
-                                    "First argument to definePlfHandler must be a string",
+                                    "First argument to registerPlfHandler must be a string",
                                 )
                             })?
                             .to_std_string_escaped();
                         let callback = args
                             .get(1)
                             .and_then(|v| v.as_object())
-                            .and_then(|o| JsFunction::from_object(o))
+                            .and_then(JsFunction::from_object)
                             .ok_or_else(|| {
                                 boa_engine::JsNativeError::typ().with_message(
-                                    "First argument to definePlfHandler must be a function",
+                                    "Second argument to registerPlfHandler must be a function",
                                 )
                             })?
                             .clone();
                         let is_safe = args.get(2).and_then(|v| v.as_boolean()).unwrap_or(false);
-                        let mut functions = functions.write().unwrap();
+                        let mut functions = functions.try_borrow_mut().map_err(|_| {
+                            boa_engine::JsNativeError::error().with_message(
+                                "registerPlfHandler cannot be called while a template is rendering",
+                            )
+                        })?;
                         functions.insert(fn_name.into(), StoredFunction::new_js(callback, is_safe));
                         Ok(JsValue::undefined())
                     })
@@ -439,7 +449,7 @@ impl Tera {
         }
 
         #[cfg(feature = "js")]
-        if Arc::ptr_eq(&self.functions, &other.functions) {
+        if Rc::ptr_eq(&self.functions, &other.functions) {
             return;
         }
 
@@ -1442,10 +1452,10 @@ impl Tera {
         vm.render_to(Some(block_name), context, &self.global_context, write)
     }
 
-        /// Evaluates JavaScript code in the global JS context and returns the result as a `JsValue`.
+    /// Evaluates JavaScript code in the global JS context and returns the result as a `JsValue`.
     ///
-    /// JS functions can call `definePlfHandler(name, callback, isSafe)` to register a new function
-    /// that can be called from templates.
+    /// JS code can call `registerPlfHandler(name, callback, isSafe)` to register a new function
+    /// that can be called from templates. The callback receives the template kwargs as an object.
     #[cfg(feature = "js")]
     pub fn eval_js(&mut self, code: &str) -> boa_engine::JsResult<boa_engine::JsValue> {
         use boa_engine::Source;
@@ -1457,10 +1467,8 @@ impl Tera {
     }
 
     #[cfg(feature = "js")]
-    pub(crate) fn functions(
-        &'_ self,
-    ) -> RwLockReadGuard<'_, HashMap<Cow<'static, str>, StoredFunction>> {
-        self.functions.read().unwrap()
+    pub(crate) fn functions(&'_ self) -> Ref<'_, HashMap<Cow<'static, str>, StoredFunction>> {
+        self.functions.borrow()
     }
 
     #[cfg(not(feature = "js"))]
@@ -1471,8 +1479,8 @@ impl Tera {
     #[cfg(feature = "js")]
     pub(crate) fn functions_mut(
         &'_ mut self,
-    ) -> RwLockWriteGuard<'_, HashMap<Cow<'static, str>, StoredFunction>> {
-        self.functions.write().unwrap()
+    ) -> RefMut<'_, HashMap<Cow<'static, str>, StoredFunction>> {
+        self.functions.borrow_mut()
     }
 
     #[cfg(not(feature = "js"))]

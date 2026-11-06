@@ -20,9 +20,9 @@ pub fn filesize_format(val: u64, kwargs: Kwargs, _: &State) -> TeraResult<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use plf::value::Map;
     use plf::{Context, Kwargs, State};
+    use std::sync::Arc;
 
     #[test]
     fn test_filesizeformat_binary() {

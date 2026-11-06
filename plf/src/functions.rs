@@ -82,6 +82,17 @@ impl StoredFunction {
                     value::{TryFromJs, TryIntoJs},
                 };
 
+                // Include the JS error in the message: the renderer only keeps the message
+                // of function errors, not their source.
+                fn js_error(
+                    msg: &str,
+                    err: boa_engine::JsError,
+                    js_context: &mut boa_engine::Context,
+                ) -> Error {
+                    let err = err.into_erased(js_context);
+                    Error::chain(format!("{msg}: {err}"), err)
+                }
+
                 match js_func.call(
                     &JsValue::undefined(),
                     &[kwargs.try_into_js(js_context).map_err(|e| {
@@ -91,12 +102,9 @@ impl StoredFunction {
                 ) {
                     Ok(result) => {
                         let val = if let Some(promise) = result.as_promise() {
-                            promise.await_blocking(js_context).map_err(|e| {
-                                Error::chain(
-                                    format!("Error awaiting JS promise"),
-                                    e.into_erased(js_context),
-                                )
-                            })?
+                            promise
+                                .await_blocking(js_context)
+                                .map_err(|e| js_error("Error awaiting JS promise", e, js_context))?
                         } else {
                             result
                         };
@@ -104,10 +112,7 @@ impl StoredFunction {
                             Error::message(format!("Error converting JS result to Tera value: {e}"))
                         })
                     }
-                    Err(e) => Err(Error::chain(
-                        format!("Error calling JS function"),
-                        e.into_erased(js_context),
-                    )),
+                    Err(e) => Err(js_error("Error calling JS function", e, js_context)),
                 }
             }
         }

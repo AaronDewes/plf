@@ -131,9 +131,9 @@ pub fn is_after(val: &Value, kwargs: Kwargs, _: &State) -> TeraResult<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use plf::value::Map;
     use plf::{Context, Kwargs, State};
+    use std::sync::Arc;
 
     // copy from https://github.com/Keats/tera/blob/master/src/builtins/filters/common.rs#L326
     #[test]

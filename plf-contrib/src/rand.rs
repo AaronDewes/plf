@@ -1,7 +1,7 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use rand::prelude::*;
 use plf::{Kwargs, State, TeraResult, Value};
+use rand::prelude::*;
 
 /// Get a random integer between the `start` (inclusive) and `end` (exclusive) parameters.
 /// Optionally takes a seed.
@@ -56,9 +56,9 @@ pub fn shuffle(mut val: Vec<Value>, kwargs: Kwargs, _: &State) -> TeraResult<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use plf::value::Map;
     use plf::{Context, Kwargs, State};
+    use std::sync::Arc;
 
     #[test]
     fn test_get_random() {
